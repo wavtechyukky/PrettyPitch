@@ -372,6 +372,80 @@ def _resolve_phonemes(sn: ScoreNote, mora_table: Dict[str, List[str]],
     return _tokenize_lyric(lyr, mora_table, maxlen, prev_vowel, phoneset)
 
 
+def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
+    """言語パックが g2p: を持つ言語（韓国語）で、歌詞の音素を先に決めておく。
+
+    韓国語は前後の音節で発音が変わる（連音・鼻音化・濃音化など）ので、1 ノートずつは引けない。
+    休符を挟まずに続くノートの並び（休符・音素を直接書いたノート・ハングルの無い歌詞で区切る）ごとに
+    G2P をかけ、ノートごとの音素を ScoreNote.phonemes に入れる。1 ノートに複数の音節があってもよい。
+    メリスマ（歌詞なし・伸ばし記号）のノートは、直前の音節の母音を伸ばし、その音節の終声は
+    メリスマの最後のノートへ移す（「밤 -」→ b a | a M。終声は音を伸ばし終えてから閉じる）。
+    """
+    ps = phoneset or _ps_mod.active()
+    if ps.g2p != 'ko':
+        return score_notes
+    from .g2p_ko import lyric_syllables, syllables_to_phonemes
+    mel = _melisma_lyrics(ps)
+    out = list(score_notes)
+
+    def kind(sn: ScoreNote) -> str:
+        if sn.is_rest:
+            return 'break'
+        if sn.phonemes is not None:
+            return 'break'
+        if sn.lyric is None or sn.lyric in mel or sn.lyric == '':
+            return 'mel'
+        if _as_phoneme_list(sn.lyric, ps) is not None or not lyric_syllables(sn.lyric):
+            return 'break'
+        return 'syl'
+
+    def run_g2p(idx: List[int]) -> None:
+        syls, owner = [], []
+        for i in idx:
+            if kind(out[i]) == 'syl':
+                s = lyric_syllables(out[i].lyric)
+                syls += s
+                owner += [i] * len(s)
+        if not syls:
+            return
+        per = syllables_to_phonemes(syls)
+        phs = {i: [] for i in idx if kind(out[i]) == 'syl'}
+        for i, p in zip(owner, per):
+            phs[i] += p
+        last_syl = None                          # メリスマが伸ばす直前の音節のノート
+        k = 0
+        while k < len(idx):
+            i = idx[k]
+            if kind(out[i]) == 'syl':
+                last_syl = i
+                k += 1
+                continue
+            j = k                                # メリスマが続く範囲 [k, j)
+            while j < len(idx) and kind(out[idx[j]]) == 'mel':
+                j += 1
+            if last_syl is not None:
+                src = phs[last_syl]
+                nuc = max((m for m, p in enumerate(src) if ps.is_nucleus(p)), default=None)
+                if nuc is not None:
+                    vowel, coda = src[nuc], src[nuc + 1:]
+                    phs[last_syl] = src[:nuc + 1]
+                    for m in range(k, j):
+                        phs[idx[m]] = [vowel] + (coda if m == j - 1 else [])
+            k = j
+        for i, p in phs.items():
+            out[i] = replace(out[i], phonemes=p)
+
+    run: List[int] = []
+    for i, sn in enumerate(out):
+        if kind(sn) == 'break':
+            run_g2p(run)
+            run = []
+        else:
+            run.append(i)
+    run_g2p(run)
+    return out
+
+
 def score_to_phrases(
     score_notes: List[ScoreNote],
     bpm: float,
@@ -389,6 +463,7 @@ def score_to_phrases(
     ps = phoneset or _ps_mod.active()
     mora_table = _as_mora_table(mora_table, ps)
     maxlen = max((len(k) for k in mora_table), default=1)
+    score_notes = _apply_g2p(score_notes, ps)     # 韓国語など、規則の G2P を持つ言語だけ
     b2s = 60.0 / bpm
 
     phrases: List[Phrase] = []

@@ -12,8 +12,9 @@ phonemes: ko.phonemes
 # 終声は音符の中で母音の後ろに残る（svs/duration_postprocess.py の onset・coda）。
 nucleus:  [a, eo, o, u, eu, i, e]
 # mora: ハングル → 音素は最長一致の表では表せない（連音・鼻音化・濃音化など、前後の音節で発音が変わる）。
-#       G2P は別に要る。
+#       代わりに規則の G2P（svs/g2p_ko.py）を、休みを挟まずに続く音符の並びごとにかける（svs/score_io.py）。
 mora: null
+g2p: ko
 
 # 有声母音（プロファイルの母音 floor 用）= 核と同じ
 vowels: [a, eo, o, u, eu, i, e]
