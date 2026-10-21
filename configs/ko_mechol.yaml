@@ -1,0 +1,161 @@
+# PrettyPitch の学習設定 — 韓国語、Mechol（男性 1 人、約 52 分）。
+#
+# configs/ja_example.yaml を写して、言語・話者・評価だけを変えたもの（ほかの値と注釈は日本語と同じ）。
+# 子音長モデルも同じ config から pitch / decomp を読む:
+#   python -m preprocess.run --recipe configs/recipes/mechol52.yaml                 # -> data/mechol52
+#   python -m duration_model.train --lang ko --config configs/ko_mechol.yaml --data_dirs data/mechol52 \
+#       --run_name cons_dur_mechol
+#   python -m duration_model.build_profile --lang ko ...                             # 子音長の floor
+#   python -m train --config configs/ko_mechol.yaml --data_dirs data/mechol52 --run_name pp_mechol --device cuda
+#
+# SVS で LeapSinger の音響モデルとつなぐときの約束: 音素表は同じ中身（dict/ko.phonemes）、Mechol の話者 id は 0。
+
+# 学習に使う言語パック（dict/<lang>.yaml）。音素表・核音素・無音写像はここから来る。
+lang: ko
+
+audio:
+  sr: 44100
+  hop: 256                     # frame = 256/44100 s (172.265625 fps) — matches LeapSinger
+
+model:
+  arch: diffusion              # diffusion | reflow — DDPM x0-prediction, or rectified
+                               # flow (velocity field, Euler; 1-step inference).
+                               # 配布ウェイトは diffusion。reflow は音高精度（cent RMSE）では
+                               # わずかに上回るが、聴感で diffusion を採った。どちらも学習・推論で使える
+  n_steps: 10                  # DDPM steps (x0 prediction, cosine betas); diffusion only
+  infer_steps: 1               # reflow Euler steps at inference (1 = single step)
+  conditioner: convnext        # 非ゲート ConvNeXt-1D conditioner（現状これだけ）
+  convnext_dilations: [1, 5, 12, 24]   # convnext block dilations; len = block count,
+                               # RF ≈ 1 + 6·Σd（この 4 ブロックで ≈253 フレーム）
+  spk_dim: 32                  # >0 = low-dim speaker bank + projection; n_speakers from spk_map
+  n_styles: 1                  # style 0 だけ
+  pitch_center: 60.0           # model pitch input = (midi - center) / scale
+  pitch_scale: 12.0            # one unit per octave (semitone geometry)
+
+pitch:                         # nucleus representative values (computed in the loader)
+  # **DB 別の値はここに書かない** — configs/recipes/{db}.yaml の `pitch:` が上書きする
+  # （train.py の merge_per_db_from_recipes が per_db へ畳み込む）。ここは全 DB 共通の既定。
+  n_iter: 2                    # target <- perceived fixed-point iterations (bootstrap: median)
+  sigma_st: 1.0                # w_t sigma [semitones] (rejects scoops/portamento)。stability: slope
+                               # と組むと 1.0 が良い（0.5 は長い核で楽譜との一致が落ちる）
+  sg_window_ms: 55.0           # w_d Savitzky-Golay window
+  min_voiced: 3                # fewer voiced frames -> "devoiced" handling below
+  devoiced_fill: interp        # interp | neighbor | none — devoiced vowels (A,I,U,E,O):
+                               #   interp   = estimate on the gap-less interpolated F0 (default;
+                               #              devoiced vowels become first-class score symbols)
+                               #   neighbor = copy the nearest voiced nucleus value
+                               #   none     = no value (baseline + input staircase propagate it)
+                               # The model pitch input is ALWAYS the forward-filled note staircase
+  devib_representative: false  # true = 代表値をビブラート除去後の F0 から採る（2パス）。
+                               # false = 生 F0 から。ビブラート除去は baseline 依存でその誤差が
+                               # 代表値へ回り込むため、false の方が楽譜との一致が良い
+
+  # 代表値を取る区間の端テーパー窓。テーパー比は「区間長に対する割合」なので hop 非依存。
+  edge_window: asym            # tukey（左右対称）| asym（左右独立テーパー）
+  edge_lead_frac: 0.8          # 先頭 80% をテーパー（母音アタック／しゃくりを弱める＝裾を削る）
+  edge_trail_frac: 0.3         # 末尾 30% をテーパー（語尾のピッチ垂れを拾わない＝中央値バイアス除去）
+
+  # ── 安定度重み w_d の定義 ────────────────────────────────────────────────────
+  # Blaauw の w_d は「SG 平滑からの残差」＝ギザギザさの指標で、まっすぐな傾斜に反応しない
+  # （3 次多項式が当たってしまう）ため、しゃくりの最中がいちばん重くなる逆転が起きる。
+  # slope は SG の 1 階微分（半音/秒）で測り、平らなところほど重くなる。
+  stability: slope             # blaauw（Blaauw 2017 原式）| slope
+  slope_k: 0.5                 # w_d = 1 / min(1 + k·|df/dt|, cap)。傾き 2 半音/秒で重み 1/2
+  slope_cap: 15.0              # 下限 1/15（Blaauw と同じ）
+
+  # ── 短いノートの山検出 ──────────────────────────────────────────────────────
+  # 短い母音（子音由来の深い谷 → 山 → 次音へ下降）では、w_t が中央値からブートストラップ
+  # するため頂点が外れ値として捨てられ、代表値が谷と山の間に落ちる。方針は
+  # 「短いノートの山では頂点付近に乗る／それ以外は一切触らない」。条件を全部満たす核だけ、
+  # 頂点付近（頂点 − band 以内の連続領域）の平均に置き換える。
+  # 行き過ぎの多い歌手では、その DB のレシピの pitch: で crest_band_st: 1.0 に上書きするか
+  # crest_max_ms: 0 で切る。
+  crest_max_ms: 300            # これ以上長い核は触らない。0 = 山検出オフ
+  crest_depth_st: 1.0          # 頂点 − 核内中央値 がこれ未満なら山形でない（尖り／平ら）→ 触らない
+  crest_prom_st: 1.0           # 極大と認める卓立の下限（depth と併用。卓立だけだと発火しすぎる）
+  crest_sg_ms: 25.0            # 頂点探索の平滑窓。55ms だと短い山を潰す
+  crest_band_st: 0.75          # 頂点 − band 以内の連続領域を平均（0 = 頂点そのもの）
+  crest_offset_cent: 0.0       # 最後に引く固定量（band で足りるので 0）
+
+decomp:                        # plain/vibrato decomposition (loader-side)
+  baseline_sigma_sec: 0.02     # 20 ms Gaussian on the value staircase (50 ms absorbed portamento)
+  band: [4.5, 7.5]             # vibrato band [Hz] — 狭めてある: only the clean periodic vibrato
+                               # lands in the vibrato channel; slow wobble and fast jitter fall
+                               # into plain and get averaged away by its L1 loss. Usability >
+                               # speaker fidelity: a plain intonation with no beating vibrato is
+                               # easier to drive
+  fir_time_sec: 0.3            # FIR window [s]（filtfilt の最小系列長 = 3×tap+1 → 0.93 s）
+  comp_method: tanh            # residual softclip before the bandpass (kills scoop ringing)
+  comp_thresh_st: 2.0
+  comp_param: 0.5
+  gain_margin_sec: 0.05        # fallback for any pre/post margin left unset
+  cons_margin_pre_sec: 0.05    # zero gain BEFORE a consonant run (tail of previous vowel)
+  cons_margin_post_sec: 0.10   # zero gain AFTER it — longer: scoop rise after the consonant
+  boundary_margin_pre_sec: 0.05   # zero gain before every phoneme boundary
+  boundary_margin_post_sec: 0.10  # after it — longer: vowel-onset transition
+  boundary_mode: all           # all | nonnucleus (keep nucleus->nucleus/melisma) | none
+  limit_margin_to_adjacent: true  # clamp every margin inside the ADJACENT phoneme only:
+                               # a 0.2 s post margin stops at the end of the very next
+                               # phoneme if that phoneme is shorter — zeroing never
+                               # carries over into the phoneme after next
+  min_open_sec: 0.10           # close any opening between margins that is narrower than
+                               # this BEFORE smoothing — a thin pinched sliver would
+                               # otherwise survive the Gaussian as a small gain bump.
+                               # Gain thus turns on only in real open spaces (and their
+                               # smoothed flanks)
+  gain_sigma_sec: 0.05
+  plain_std: 0.07              # channel normalization (model outputs are /std)
+  vib_std: 0.035               # channel normalization（正規化後の vibrato std が ~0.24 になる値）
+  # **DB 別の値はここに書かない** — configs/recipes/{db}.yaml の `decomp:` が上書きする
+  # （train.py の merge_per_db_from_recipes が下の per_db へ畳み込む）。再preprocess は不要
+  # ＝ npz は生の phonemes/F0/uv しか持たない。plain_std / vib_std / baseline_sigma_sec は
+  # ckpt が単一値で持ち推論側が全話者に同じ値を使うので、DB 別にはできない（レシピで拒否）。
+  per_db: {}
+
+train:
+  lr: 2.0e-4
+  betas: [0.8, 0.99]           # AdamW
+  lr_step: 5000                # StepLR every N optimizer steps
+  lr_gamma: 0.5
+  grad_clip: 1.0               # generator only
+  max_steps: 10000
+  max_batch_frames: 160000     # frames per batch (hop 256)
+  max_batch_size: 32
+  num_workers: 4
+  w_delta: 10.0                # plain Δ L1 weight
+  w_delta_delta: 12.0          # plain ΔΔ L1 weight
+  stft_loss_weight: 0.1        # vibrato multi-res STFT (phase-insensitive)
+  vib_l1_tail_sec: 0.2         # vibrato L1 mask: non-nucleus + the first this-many seconds of the
+                               # nucleus that follows a consonant/pau (phase-locked scoops).
+                               # ビブラートは子音終了の ~0.1 s 後に始まるので 0.2 s が上限。
+                               # 尾は自分の音素の終わりで打ち切られ、次の音素へは食い込まない
+  balance_by: db               # null | speaker | db (db = per speaker×style unit)
+  n_plot: 2                    # TB figures per DB (speaker×style unit) from the EVAL split
+  n_train_plot: 2              # same from the TRAIN split (teacher-tracking check); 0 = off
+  log_interval: 50
+  val_check_interval: 500
+  save_interval: 1000
+
+gan:
+  enabled: true
+  w_adv: 0.1
+  w_fm: 1.0
+  lr_d: 2.0e-4
+
+data:
+  eval_songs: 2                # 抜く「曲」の数。mechol52 は長い 1 本を 1 分ほどの片に切ってあるので、片 2 つ
+  eval_dbs: [mechol52]
+  min_sec: 1.7                 # ビブラート分離の filtfilt が要る最小長（0.3 s FIR で 0.93 s）に余裕を足した値
+  # Drop a phrase if any voiced frame falls below this F0 [Hz]: the extractor can latch onto the
+  # decaying tail of a note and return a pitch far below the singer's range. The threshold
+  # belongs to the singer's range, so it lives **in the recipe** (`reject_f0_below:` in
+  # configs/recipes/{db}.yaml — 100 Hz for the female DBs, 60 Hz for the male one). Filtering
+  # happens at load time — changing it needs no re-preprocessing. The value below is the
+  # all-DB fallback for databases whose recipe says nothing; null keeps every phrase.
+  # (train.py fills `reject_f0_per_db` from the recipes — do not write it here.)
+  reject_f0_below: null
+  # {db-folder-name: id}. **話者/スタイルはここだけが決める** — レシピは書かない。
+  # ここに無い DB は話者 0 になり、train.py が警告を出す。新しい話者は連番で足し、
+  # スタイルを増やすときは model.n_styles も増やす。
+  spk_map:   {mechol52: 0}     # Mechol = 0（LeapSinger の音響モデルと同じ番号にする）
+  style_map: {mechol52: 0}

@@ -1,0 +1,38 @@
+# Recipe: Mechol の歌（韓国語、十代の男性 1 人、約 52 分）。表記は Team CODA（dict/ko.yaml）。
+# 一部（約 31.5 分）は Sds-Korean-Singing-Dataset の Mechol-001 として公開されている。残りは公開されていない。
+# 読むのは、LeapSinger の tools/convert_labels.py labdir で整えた wav と lab の組（同じフォルダに <名前>.wav・.lab）:
+#   長い 1 本を休みで 1 分ほどの片に切り（RMVPE のメモリのため）、ラベルの隙間をそろえ、音声の終わりで切ったもの。
+#   download/mechol52/ に置く（このリポジトリには入っていない）。
+#   python -m preprocess.run --recipe configs/recipes/mechol52.yaml
+# 話者 / スタイル ID はここでは決めない — 学習 config の data.spk_map / style_map が唯一の情報源。
+name: mechol52
+lang: ko                   # 言語パック dict/ko.yaml（音素表 = LeapSinger の dict/ko_coda.phonemes と同じ中身）
+f0_octave_fix: true
+silence_pau: true          # pau を F0 抽出の **前に** 無音化する（息継ぎを有声と誤判定して高い F0 を返すのを防ぐ。男声で特に効く）
+silence_fade_sec: 0.05
+lab_unit: "100ns"
+
+layout: type_split
+db_root: download/mechol52
+wav_dir: "."               # wav と lab が同じフォルダにある
+wav: "{song}.wav"
+lab: "{song}.lab"
+
+# 1 回ずつ出てくる書き間違いの写像（SP・AP・exh・trash は dict/ko.yaml の sil_map が pau にする）
+phon_norm:
+  "Sp": pau
+  "sh": s
+  "hh": h
+  "R": r
+  "O": o
+  "D": d
+  "ng": NG
+  "uu": u
+exclude: []
+
+# ── 学習時の DB 別ハイパラ（ローダーが読む。変えても再 preprocess は要らない）──────────────
+reject_f0_below: 60.0      # 男声。natsume と同じ値
+
+decomp: {}
+pitch: {}
+duration: {}

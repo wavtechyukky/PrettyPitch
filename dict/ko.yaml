@@ -1,0 +1,50 @@
+# 言語パック: 韓国語（Team CODA の表記）
+#
+# 音素表 ko.phonemes は LeapSinger の dict/ko_coda.phonemes と **同じ中身**（SVS で音響モデルと音素の名前を突き合わせるため。
+# 片方だけ変えないこと）。音節は (初声)(わたり音 y・w)母音(終声)。終声（パッチム）は大文字（N L M NG K T P）。
+#
+#   python -m preprocess.run --recipe configs/recipes/<your_ko_db>.yaml      # レシピに lang: ko
+#   python -m duration_model.train --lang ko ...
+#   python train.py --config configs/<your_ko_config>.yaml                    # config に lang: ko
+
+phonemes: ko.phonemes
+# ピッチ（ノート）を担う核音素 = 母音 7。わたり音 y・w は頭子音のまとまり（音符の前へ出る）、
+# 終声は音符の中で母音の後ろに残る（svs/duration_postprocess.py の onset・coda）。
+nucleus:  [a, eo, o, u, eu, i, e]
+# mora: ハングル → 音素は最長一致の表では表せない（連音・鼻音化・濃音化など、前後の音節で発音が変わる）。
+#       G2P は別に要る。
+mora: null
+
+# 有声母音（プロファイルの母音 floor 用）= 核と同じ
+vowels: [a, eo, o, u, eu, i, e]
+
+# 無声化母音のような正規化は無い
+vowel_normalize: {}
+
+# 無音トークン。SP・AP・exh（吐息）・trash（雑音の印）はラベルにそのまま出てくるので、ここで pau に畳む。
+# **vf（ボーカルフライ）は入れない**: 韓国語のラベルでは声の出ている区間で、音響モデル（LeapSinger）も音素として扱う。
+silence: [pau, PAU, sil, sp, br, SP, AP, exh, trash]
+
+# 前処理でラベル上の無音トークンを pau へ書き換える写像
+sil_map:
+  sil:   pau
+  sp:    pau
+  br:    pau
+  SP:    pau
+  AP:    pau
+  exh:   pau
+  trash: pau
+
+# 子音（長さの予測対象）から外す追加記号は無い。cl（閉鎖）と vf は子音として長さを予測する。
+non_consonant_extra: []
+
+# 正規化の挙動（大文字の終声と小文字の初声は別の音素なので畳まない）
+case_fold: false
+strip_stress_digits: false
+
+# 楽譜読み取り（svs/score_io.py）
+score:
+  rest_lyrics:    ["R", "r", "pau", "sil", "sp", "AP", "SP", ""]
+  melisma_lyrics: ["-", "+"]
+  melisma_vowel:  a
+  ust_encoding:   utf-8
