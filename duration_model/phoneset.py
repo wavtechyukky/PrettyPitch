@@ -58,6 +58,8 @@ class PhoneSet:
     # 後ろに核の無い子音（句末・休みの前の終声）も子音長モデルの対象にするか。
     # 終声で句が終わる言語（韓国語など）で true。duration_model/features.py を参照
     final_consonants: bool = False
+    # 歌詞 → 音素を表（mora）でなく規則で引く言語の G2P の名前（'ko' = svs/g2p_ko.py）。None = mora 表
+    g2p: Optional[str] = None
     score: Mapping = field(default_factory=dict)
     phonemes_path: Optional[Path] = None
     nucleus_path: Optional[Path] = None
@@ -127,6 +129,7 @@ class PhoneSet:
             'case_fold': self.case_fold,
             'strip_stress_digits': self.strip_stress_digits,
             'final_consonants': self.final_consonants,
+            'g2p': self.g2p,
         }
 
 
@@ -216,6 +219,7 @@ def load(lang: str = DEFAULT_LANG,
         case_fold=pack.get('case_fold') or None,
         strip_stress_digits=bool(pack.get('strip_stress_digits', False)),
         final_consonants=bool(pack.get('final_consonants', False)),
+        g2p=pack.get('g2p') or None,
         score=dict(pack.get('score') or {}),
         phonemes_path=ph_path,
         nucleus_path=nu_path,
