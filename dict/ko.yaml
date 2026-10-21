@@ -38,6 +38,11 @@ sil_map:
 # 子音（長さの予測対象）から外す追加記号は無い。cl（閉鎖）と vf は子音として長さを予測する。
 non_consonant_extra: []
 
+# 句末・休みの前の終声（사랑 の NG、밤 の M など）も子音長モデルで予測する。既定（false）では後ろに
+# ノートの無い子音は対象外で、推論では一律 FALLBACK_CONS_DUR（80 ms）になる。日本語にはほぼ無いが、
+# 韓国語では閉じた音節で句が終わるのが普通（Mechol のデータで 228 回）。
+final_consonants: true
+
 # 正規化の挙動（大文字の終声と小文字の初声は別の音素なので畳まない）
 case_fold: false
 strip_stress_digits: false

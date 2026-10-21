@@ -130,6 +130,7 @@ def predict_cons_naturals(phrase: Phrase, model, *, spk_id: int = 0, style_id: i
     phrase は `split_phrase_syllables` を通した「1 ノート = `_syllabify` の 1 グループ」の
     形を想定（通さなくても動くが、多モーラノートの内部子音は予測されずフォールバックになる）。
     予測対象にならない子音（フレーズ末尾で入るノートが無い等）は FALLBACK_CONS_DUR。
+    ただし言語パックが final_consonants: true（韓国語など）なら、句末・休みの前の終声も予測する。
 
     phoneset 未指定なら **ckpt が記録した音素表**（`model.phoneset`）を使う。モジュール
     既定に落ちると、英語 ckpt を日本語の既定で動かして全子音がフォールバックする。

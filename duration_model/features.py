@@ -142,16 +142,25 @@ def extract_phrase_records(ph_strs: list[str], dur_sec: np.ndarray, values: np.n
                 k = kk
                 break
         if k is None:
-            continue  # 末尾の子音（入るべきノートが無い）
-        # 次の音節の総時間。span_dur は核に集約済みなので trailing 子音を足す必要が無い。
-        next_note_dur = float(span_dur[k])
-
-        # ピッチ = 直後ノートの F0 代表値（MIDI）。NaN は近傍/中央にフォールバック。
-        pit = float(values[k])
-        if not np.isfinite(pit):
+            # 後ろに核の無い子音（句末や休みの前）。既定では入るべきノートが無いので扱わない。
+            # 言語パックが final_consonants: true のとき（終声で句が終わる韓国語など）は、前の
+            # ノートの終声として扱う: 音高は前のノートの代表値、next_note_dur = 0（＝後ろに
+            # ノートが無い。prev_note_dur = 0 が「前にノートが無い」を表すのと同じ約束）。
+            if not (ps.final_consonants and j is not None):
+                continue  # 末尾の子音（入るべきノートが無い）
+            next_note_dur = 0.0
             pit = prev_val if np.isfinite(prev_val) else 60.0
-        if not np.isfinite(prev_val):
             prev_val = pit
+        else:
+            # 次の音節の総時間。span_dur は核に集約済みなので trailing 子音を足す必要が無い。
+            next_note_dur = float(span_dur[k])
+
+            # ピッチ = 直後ノートの F0 代表値（MIDI）。NaN は近傍/中央にフォールバック。
+            pit = float(values[k])
+            if not np.isfinite(pit):
+                pit = prev_val if np.isfinite(prev_val) else 60.0
+            if not np.isfinite(prev_val):
+                prev_val = pit
 
         recs.append({
             'idx':              i,          # フレーズ内の音素位置（推論で結果を戻すのに使う）
