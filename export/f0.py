@@ -169,6 +169,10 @@ def synthetic_phrase(cfg: dict, seconds: float, seed: int = 0):
 
 def example_inputs(wrapper: F0Wrapper, cfg: dict, seconds: float, seed: int = 0, spk: int = 2,
                    style_mix=None):
+    # 話者の番号はモデルの話者の数に収める（既定の 2 は 3 話者の配布モデル用。1 話者のモデルでは 0）
+    bank = getattr(wrapper.m, 'spk_bank', None)
+    if bank is not None:
+        spk = min(int(spk), bank.num_embeddings - 1)
     tokens, pitch, durs = synthetic_phrase(cfg, seconds, seed)
     T = int(durs.sum())
     n_styles = int(cfg.get('n_styles', 0))
@@ -221,8 +225,9 @@ def bench(onnx_path: str, seconds: float, repeats: int, threads: int | None, tor
     tokens, pitch, durs = synthetic_phrase(cfg, seconds, 0)
     T = int(durs.sum())
     sm = np.zeros((1, max(1, int(cfg.get('n_styles', 0)))), np.float32); sm[0, 0] = 1
+    spk = min(2, max(1, int(cfg.get('n_speakers', 3))) - 1)      # 3 話者の配布モデルは 2、1 話者は 0
     feed = {'tokens': tokens.numpy(), 'pitch_midi': pitch.numpy(), 'durations': durs.numpy(),
-            'spk_id': np.array([2], np.int64), 'style_mix': sm,
+            'spk_id': np.array([spk], np.int64), 'style_mix': sm,
             'noise': np.random.default_rng(0).standard_normal((1, K, 2, T), dtype=np.float32)}
     rss0 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
     so = ort.SessionOptions()
@@ -243,7 +248,7 @@ def bench(onnx_path: str, seconds: float, repeats: int, threads: int | None, tor
         import infer
         model, tcfg = infer.load_model(torch_ckpt, 'cpu')
         w = F0Wrapper(model, tcfg).eval()
-        ex = (tokens, pitch, durs, torch.tensor([2]), torch.from_numpy(sm), torch.from_numpy(feed['noise']))
+        ex = (tokens, pitch, durs, torch.tensor([spk]), torch.from_numpy(sm), torch.from_numpy(feed['noise']))
         r0 = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
         t0 = time.perf_counter()
         with torch.no_grad():
