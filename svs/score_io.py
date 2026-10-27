@@ -373,18 +373,21 @@ def _resolve_phonemes(sn: ScoreNote, mora_table: Dict[str, List[str]],
 
 
 def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
-    """言語パックが g2p: を持つ言語（韓国語）で、歌詞の音素を先に決めておく。
+    """言語パックが g2p: を持つ言語（韓国語・中国語）で、歌詞の音素を先に決めておく。
 
-    韓国語は前後の音節で発音が変わる（連音・鼻音化・濃音化など）ので、1 ノートずつは引けない。
-    休符を挟まずに続くノートの並び（休符・音素を直接書いたノート・ハングルの無い歌詞で区切る）ごとに
-    G2P をかけ、ノートごとの音素を ScoreNote.phonemes に入れる。1 ノートに複数の音節があってもよい。
-    メリスマ（歌詞なし・伸ばし記号）のノートは、直前の音節の母音を伸ばし、その音節の終声は
-    メリスマの最後のノートへ移す（「밤 -」→ b a | a M。終声は音を伸ばし終えてから閉じる）。
+    韓国語は前後の音節で発音が変わる（連音・鼻音化・濃音化など）、中国語は多音字の読みが熟語で決まるので、
+    1 ノートずつは引けない。休符を挟まずに続くノートの並び（休符・音素を直接書いたノート・G2P で読めない歌詞で
+    区切る）ごとに G2P をかけ、ノートごとの音素を ScoreNote.phonemes に入れる。1 ノートに複数の音節があってもよい。
+    メリスマ（歌詞なし・伸ばし記号）のノートは、直前の音節の母音を伸ばし、その音節の終声（韻尾）は
+    メリスマの最後のノートへ移す（「밤 -」→ b a | a M、「看 -」→ k a | a N。終声は音を伸ばし終えてから閉じる）。
     """
     ps = phoneset or _ps_mod.active()
-    if ps.g2p != 'ko':
+    if ps.g2p == 'ko':
+        from .g2p_ko import lyric_syllables, syllables_to_phonemes
+    elif ps.g2p == 'zh_acv':
+        from .g2p_zh import lyric_syllables, syllables_to_phonemes
+    else:
         return score_notes
-    from .g2p_ko import lyric_syllables, syllables_to_phonemes
     mel = _melisma_lyrics(ps)
     out = list(score_notes)
 

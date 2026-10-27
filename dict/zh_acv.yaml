@@ -1,0 +1,56 @@
+# 言語パック: 中国語（普通話。ArchiVoice の ACV 表記、https://github.com/Archivoice/AV-diffsinger-Chinese-support）
+#
+# 音素表 zh_acv.phonemes は LeapSinger の dict/zh_acv.phonemes と **同じ中身**（SVS で音響モデルと音素の名前を
+# 突き合わせるため。片方だけ変えないこと）。音節は (声母 | ゼロ声母の頭 y w rr)(介音を含んだ主母音)(韻尾):
+# xiao = x iA U、kuai = k ua ii、juan = j yE N、ya = y a、yue = rr E。大文字と小文字は別の音素（a と A、i と I など）。
+#
+#   python -m preprocess.run --recipe configs/recipes/acv001_cn.yaml      # レシピに lang: zh_acv
+#   python -m duration_model.train --lang zh_acv ...
+#   python -m train --config configs/zh_acv.yaml                          # config に lang: zh_acv
+
+phonemes: zh_acv.phonemes
+# ピッチ（ノート）を担う核音素 = 介音を含んだ主母音 23 とハミング M。
+# 声母・y w rr は頭子音のまとまり（音符の前へ出る）。韻尾 ii U N ng は韓国語の終声と同じく、音符の中で
+# 主母音の後ろに残る（svs/duration_postprocess.py の onset・coda）。
+nucleus:  [a, A, e, E, er, i, I, i0, ih, ie, ia, iA, iO, O, u, ua, uo, uA, uE, V, yu, yI, yE, M]
+# 歌詞 → 音素は表（mora）でなく規則の G2P（svs/g2p_zh.py）: 漢字（dict/zh_pinyin.json で拼音に）・拼音・音素を直接
+mora: null
+g2p: zh_acv
+
+# 有声母音（プロファイルの母音 floor 用）= 核と同じ
+vowels: [a, A, e, E, er, i, I, i0, ih, ie, ia, iA, iO, O, u, ua, uo, uA, uE, V, yu, yI, yE, M]
+
+vowel_normalize: {}
+
+# 無音トークン。SP（無音）・AP（吸う息）と、ACV の息の仲間の記号を pau に畳む:
+# mlem（息の頭の舌打ち）・exh（無声の吐く息）・axh（有声の吐く息）・hx（息の抜け）。
+# **vf（ボーカルフライ）は入れない**: 音節の頭で母音の直前に付く声のある音で、音響モデル（LeapSinger）も音素として扱う。
+silence: [pau, PAU, sil, sp, br, SP, AP, mlem, exh, axh, hx]
+
+sil_map:
+  sil:  pau
+  sp:   pau
+  br:   pau
+  SP:   pau
+  AP:   pau
+  mlem: pau
+  exh:  pau
+  axh:  pau
+  hx:   pau
+
+# 子音（長さの予測対象）から外す追加記号は無い。cl・vf・韻尾は子音として長さを予測する。
+non_consonant_extra: []
+
+# 句末・休みの前の韻尾（an の N、ai の ii など）も子音長モデルで予測する（韓国語の終声と同じ）。
+final_consonants: true
+
+# 大文字と小文字は別の音素なので畳まない
+case_fold: false
+strip_stress_digits: false
+
+# 楽譜読み取り（svs/score_io.py）
+score:
+  rest_lyrics:    ["R", "r", "pau", "sil", "sp", "AP", "SP", ""]
+  melisma_lyrics: ["-", "+"]
+  melisma_vowel:  a
+  ust_encoding:   utf-8

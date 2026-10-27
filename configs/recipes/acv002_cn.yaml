@@ -1,0 +1,30 @@
+# Recipe: ACV-002 の中国語（普通話）の曲。ACV-001 と同じ人が女声で歌ったもの（ArchiVoice、Jonathan Huang さん）、
+# 19 曲・約 54 分（無音込み）。19 曲のうち 11 曲は ACV-001 と同じ曲。音の高さは ACV-001 より平均で約 9 半音高い。
+# https://github.com/Archivoice/ACV-002 （CC BY-SA 4.0）。表記は ACV の中国語（dict/zh_acv.yaml）。
+# full_length_samples の labs/<曲>.lab と wavs/<曲>.wav（HTK 100 ns）をそのまま使う。download/ACV-002/ に置く。
+#   python -m preprocess.run --recipe configs/recipes/acv002_cn.yaml
+# 記号の扱いは acv001_cn.yaml と同じ。
+name: acv002_cn
+name_prefix: acv002_
+lang: zh_acv
+f0_octave_fix: true
+silence_pau: true
+silence_fade_sec: 0.05
+lab_unit: "100ns"
+
+layout: type_split
+db_root: download/ACV-002/full_length_samples
+wav_dir: wavs
+wav: "wavs/{song}.wav"
+lab: "labs/{song}.lab"
+
+drop_phones: ["en/"]
+phon_norm: {}
+exclude: []
+
+# ── 学習時の DB 別ハイパラ（ローダーが読む。変えても再 preprocess は要らない）──────────────
+reject_f0_below: 100.0     # 女声。oniku・natsume・ritsu と同じ値
+
+decomp: {}
+pitch: {}
+duration: {}

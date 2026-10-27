@@ -1,0 +1,32 @@
+# Recipe: ACV-001 の中国語（普通話）の曲。男声 1 人（ArchiVoice、Jonathan Huang さん）、54 曲・約 2.4 時間（無音込み）。
+# https://github.com/Archivoice/ACV-001 （CC BY-SA 4.0）。表記は ACV の中国語（dict/zh_acv.yaml）。
+# full_length 版の cn/ をそのまま使う（labs/<曲>.lab と wavs/<曲>.wav、HTK 100 ns）。download/ACV-001/ に置く
+# （このリポジトリには入っていない）。
+#   python -m preprocess.run --recipe configs/recipes/acv001_cn.yaml
+# 中国語の曲の中の英単語（en/…）は drop_phones で、まわりのフレーズごと除く。
+# 息の仲間の記号（mlem・exh・axh・hx）は dict/zh_acv.yaml の sil_map が pau にする。vf と M は音素のまま。
+# 話者 / スタイル ID はここでは決めない — 学習 config の data.spk_map / style_map が唯一の情報源。
+name: acv001_cn
+name_prefix: acv001_
+lang: zh_acv               # 言語パック dict/zh_acv.yaml（音素表 = LeapSinger の dict/zh_acv.phonemes と同じ中身）
+f0_octave_fix: true
+silence_pau: true          # pau を F0 抽出の **前に** 無音化する（息継ぎを有声と誤判定して高い F0 を返すのを防ぐ）
+silence_fade_sec: 0.05
+lab_unit: "100ns"
+
+layout: type_split
+db_root: download/ACV-001/full_length/cn
+wav_dir: wavs
+wav: "wavs/{song}.wav"
+lab: "labs/{song}.lab"
+
+drop_phones: ["en/"]
+phon_norm: {}
+exclude: []
+
+# ── 学習時の DB 別ハイパラ（ローダーが読む。変えても再 preprocess は要らない）──────────────
+reject_f0_below: 60.0      # 男声。natsume と同じ値
+
+decomp: {}
+pitch: {}
+duration: {}

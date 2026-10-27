@@ -36,6 +36,29 @@ def _enumerate_songs(recipe: dict, db_root: str) -> list[str]:
     raise ValueError(f"unknown layout: {layout}")
 
 
+def _drop_fix(lab_fix, drop: tuple):
+    """レシピの drop_phones（記号の頭。例: 中国語の曲の中の英単語の `en/`）: その記号の行を、曲ごとの lab_fix の後で
+    `pau` にする。その行に触れるフレーズは `_drop_spans` で丸ごと除くので、その音声は shard に入らない。"""
+    if not drop:
+        return lab_fix
+
+    def fix(segs):
+        segs = lab_fix(segs) if lab_fix is not None else segs
+        return [(s, e, "pau" if p.startswith(drop) else p) for s, e, p in segs]
+    return fix
+
+
+def _drop_spans(lab_path: str, lab_unit: str, lab_fix, drop: tuple) -> list:
+    """drop_phones に当たる行の [[始まり, 終わり], ...]（秒）。process_file はこれに重なるフレーズをすべて除く。"""
+    if not drop:
+        return []
+    from .lab import read_lab
+    segs = read_lab(lab_path, lab_unit)
+    if lab_fix is not None:
+        segs = lab_fix(segs)
+    return [[s, e] for s, e, p in segs if p.startswith(drop)]
+
+
 def run_recipe(recipe_path: str, out_root: str = "data",
                frames: FrameSpec | None = None, limit: int | None = None, vocab=None) -> int:
     frames = frames or FrameSpec()
@@ -52,6 +75,7 @@ def run_recipe(recipe_path: str, out_root: str = "data",
     prefix = r.get("name_prefix", "")
     hook = recipes.load(r.get("hook", r["name"]))     # per-singer code module, if any
     has_fix = hook is not None and hasattr(hook, "fix_lab")
+    drop = tuple(r.get("drop_phones") or ())
     # 静音区間(pau / 長い cl)を無音化してから F0 を抽出する。既定 ON。
     silence_pau = bool(r.get("silence_pau", True))
     silence_fade_sec = float(r.get("silence_fade_sec", 0.05))
@@ -75,7 +99,8 @@ def run_recipe(recipe_path: str, out_root: str = "data",
                          f0_device=r.get("f0_device", "cpu"),
                          f0_octave_fix=bool(r.get("f0_octave_fix", True)),
                          silence_pau=silence_pau, silence_fade_sec=silence_fade_sec,
-                         lab_unit=lab_unit, phon_norm=phon_norm, lab_fix=lab_fix, vocab=vocab)
+                         exclude_spans=_drop_spans(paths["lab"], lab_unit, lab_fix, drop) or None,
+                         lab_unit=lab_unit, phon_norm=phon_norm, lab_fix=_drop_fix(lab_fix, drop), vocab=vocab)
         except Exception as e:  # noqa: BLE001 — keep going, report the failing song
             print(f"  [FAIL] {s}: {e}")
             continue
