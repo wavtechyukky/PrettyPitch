@@ -386,6 +386,9 @@ def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
         from .g2p_ko import lyric_syllables, syllables_to_phonemes
     elif ps.g2p == 'zh_acv':
         from .g2p_zh import lyric_syllables, syllables_to_phonemes
+    elif ps.g2p == 'zh_opencpop':
+        from .g2p_zh import lyric_syllables, syllables_to_phonemes as _zh
+        syllables_to_phonemes = lambda syls: _zh(syls, scheme='opencpop')  # noqa: E731
     else:
         return score_notes
     mel = _melisma_lyrics(ps)

@@ -37,10 +37,10 @@ class ConsonantDurDataset(Dataset):
                  min_sec: float = 0.5, seed: int = 42, nucleus_names=None,
                  pitch_cfg: dict | None = None, decomp_cfg: dict | None = None,
                  spk_map: dict | None = None, style_map: dict | None = None,
-                 phoneset=None):
+                 phoneset=None, eval_dbs=None):
         self.ps = phoneset or _ps_mod.active()
         self._f0 = PrettyPitchF0Dataset(
-            dirs, split=split, eval_songs=eval_songs, min_sec=min_sec, seed=seed,
+            dirs, split=split, eval_songs=eval_songs, eval_dbs=eval_dbs, min_sec=min_sec, seed=seed,
             pau_aug=False, nucleus_names=nucleus_names,
             pitch_cfg=pitch_cfg, decomp_cfg=decomp_cfg)
         id2ph = {v: k for k, v in self._f0.meta['phoneme_vocab'].items()}

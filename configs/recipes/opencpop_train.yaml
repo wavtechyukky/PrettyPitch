@@ -1,0 +1,28 @@
+# Recipe: Opencpop の学習用の区間（3550 本、女声 1 人）。https://wenet.org.cn/opencpop/ （CC BY-NC-ND 4.0、非商用）。
+# 表記は Opencpop の声母 + 韻母（dict/zh_opencpop.yaml）。音声は segments/wavs/<区間>.wav（44.1 kHz）を download/opencpop/ に置く
+# （このリポジトリには入っていない）。ラベルは segments/transcriptions.txt の音素の長さを、LeapSinger の
+# tools/convert_labels.py opencpop（--split_i: zhi chi shi ri → ir、zi ci si → i0）で lab にしたものを読む
+# （download/opencpop_labels/{train,test}/<区間>.lab、HTK 100 ns）。LeapSinger のレシピと同じラベル。
+#   python -m preprocess.run --recipe configs/recipes/opencpop_train.yaml
+# 話者 / スタイル ID はここでは決めない — 学習 config の data.spk_map / style_map が唯一の情報源。
+name: opencpop_train
+lang: zh_opencpop          # 言語パック dict/zh_opencpop.yaml（音素表 = LeapSinger の dict/zh_opencpop.phonemes と同じ中身）
+f0_octave_fix: true
+silence_pau: true          # pau を F0 抽出の **前に** 無音化する（息継ぎを有声と誤判定して高い F0 を返すのを防ぐ）
+silence_fade_sec: 0.05
+lab_unit: "100ns"
+
+layout: from_lab           # ラベルのある区間だけ（wavs/ には test の区間も入っている）
+db_root: download/opencpop
+wav: "wavs/{song}.wav"
+lab: "../opencpop_labels/train/{song}.lab"   # db_root から見た相対（= download/opencpop_labels/train）。絶対パスでもよい
+
+phon_norm: {}
+exclude: []
+
+# ── 学習時の DB 別ハイパラ（ローダーが読む。変えても再 preprocess は要らない）──────────────
+reject_f0_below: 100.0     # 女声
+
+decomp: {}
+pitch: {}
+duration: {}

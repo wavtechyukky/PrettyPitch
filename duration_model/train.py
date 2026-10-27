@@ -132,6 +132,7 @@ def main():
     pitch_cfg = _force_devib(cfg['pitch'])       # 子音長: ピッチは常にビブラート除去後の代表値
     decomp_cfg = dict(cfg.get('decomp', {}))
     eval_songs = int(cfg.get('data', {}).get('eval_songs', 2))
+    eval_dbs = cfg.get('data', {}).get('eval_dbs')   # F0 モデル（train.py）と同じ: 指定した DB からだけ評価の曲を抜く
     nucleus_names = sorted(ps.nuclei)
 
     # 話者/スタイル（F0 モデルと同じ spk_map / style_map / n_styles を共用）
@@ -145,7 +146,7 @@ def main():
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_dir = ckpt_dir / 'tb'
 
-    common = dict(eval_songs=eval_songs, min_sec=args.min_sec, seed=args.seed,
+    common = dict(eval_songs=eval_songs, eval_dbs=eval_dbs, min_sec=args.min_sec, seed=args.seed,
                   nucleus_names=nucleus_names, pitch_cfg=pitch_cfg, decomp_cfg=decomp_cfg,
                   spk_map=spk_map, style_map=style_map)
     trn_dataset = ConsonantDurDataset(args.data_dirs, split='train', **common)

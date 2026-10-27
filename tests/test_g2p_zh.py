@@ -2,7 +2,7 @@
 import pytest
 
 from duration_model import phoneset
-from svs.g2p_zh import lyric_syllables, pinyin_to_phonemes, syllables_to_phonemes
+from svs.g2p_zh import lyric_syllables, pinyin_to_opencpop, pinyin_to_phonemes, syllables_to_phonemes
 from svs.score_io import ScoreNote, score_to_phrases
 
 
@@ -25,6 +25,36 @@ def test_pinyin_rules_only_use_the_acv_phonemes():
     assert len(sylls) > 400
     for s in sylls:
         assert all(p in zh.phonemes for p in pinyin_to_phonemes(s)), s
+
+
+@pytest.mark.parametrize("syl, expected", [
+    ("xiao", "x iao"), ("kuai", "k uai"), ("juan", "j van"), ("xiong", "x iong"),
+    ("ya", "y a"), ("yue", "y ve"), ("yuan", "y van"), ("yun", "y vn"), ("yu", "y v"), ("yi", "y i"), ("wu", "w u"),
+    ("ye", "y e"), ("yan", "y an"), ("yin", "y in"), ("ying", "y ing"), ("wei", "w ei"), ("wo", "w o"),
+    ("zhi", "zh ir"), ("ri", "r ir"), ("si", "s i0"), ("bo", "b o"), ("fo", "f o"),
+    ("jiu", "j iu"), ("dui", "d ui"), ("lun", "l un"), ("lv", "l v"), ("lve", "l ve"), ("nue", "n ve"),
+    ("qu", "q v"), ("er", "er"), ("ai", "ai"), ("ou", "ou"), ("e", "e"),
+])
+def test_pinyin_to_opencpop(syl, expected):
+    assert " ".join(pinyin_to_opencpop(syl)) == expected
+
+
+def test_opencpop_rules_read_every_syllable_with_the_opencpop_phonemes():
+    zh = phoneset.load("zh_opencpop")
+    from svs.g2p_zh import _syllables
+    sylls, _ = _syllables()
+    for s in sylls:
+        ph = pinyin_to_opencpop(s)
+        assert ph is not None and all(p in zh.phonemes for p in ph), s
+
+
+def test_score_reads_hanzi_in_the_opencpop_notation_and_a_melisma_repeats_the_final():
+    zh = phoneset.load("zh_opencpop")
+    ph = score_to_phrases(_notes("音", "乐", "看", "-", "xiao3", "wo"), bpm=120, phoneset=zh)[0]
+    assert [n.phonemes for n in ph.notes] == [["y", "in"], ["y", "ve"], ["k", "an"], ["an"],
+                                             ["x", "iao"], ["w", "o"]]
+    ph = score_to_phrases(_notes("zh ir", "an"), bpm=120, phoneset=zh)[0]   # 音素を直接（韻母は拼音と同じ綴り）
+    assert [n.phonemes for n in ph.notes] == [["zh", "ir"], ["an"]]
 
 
 def test_lyric_syllables_reads_hanzi_and_pinyin_with_or_without_tones():

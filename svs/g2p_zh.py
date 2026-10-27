@@ -1,4 +1,4 @@
-"""中国語（普通話）の G2P: 漢字・拼音 → ACV 表記の音素（dict/zh_acv.phonemes）。
+"""中国語（普通話）の G2P: 漢字・拼音 → ACV 表記の音素（dict/zh_acv.phonemes）か Opencpop 表記の音素（dict/zh_opencpop.phonemes）。
 
 漢字 → 拼音: dict/zh_pinyin.json（tools/build_zh_pinyin.py が pypinyin のデータから作る表）。1 字ずつの既定の読みと、
 多音字の読みが既定と違う熟語（长大 zhang da、音乐 yin yue など）の表を持つ。続けて歌う漢字の並びを、熟語の表の
@@ -66,6 +66,37 @@ def pinyin_to_phonemes(syl: str) -> Optional[List[str]]:
     if fin not in _FINALS:
         return None
     return [ini] + _FINALS[fin]
+
+
+# Opencpop の表記（dict/zh_opencpop.phonemes）: 声母 + 韻母（韻母は介音・韻尾を含めて 1 つ）。ゼロ声母は綴りの y w を
+# 声母として残し（ya = y a、wu = w u、yue = y ve、yuan = y van）、a o e で始まる音節は韻母だけ（ai = ai）。
+# zhi chi shi ri の i は ir、zi ci si の i は i0（LeapSinger の tools/convert_labels.py --split_i と同じ）。
+_OPENCPOP_FINALS = frozenset("a o e ai ei ao ou an en ang eng ong er i u v ia ie iao iu ian in iang ing iong "
+                             "ua uo uai ui uan un uang ve van vn".split())
+_OPENCPOP_ZERO: Dict[str, List[str]] = {"yu": ["y", "v"], "yue": ["y", "ve"], "yuan": ["y", "van"], "yun": ["y", "vn"]}
+
+
+def pinyin_to_opencpop(syl: str) -> Optional[List[str]]:
+    """拼音 1 音節（小文字・声調なし・ü は v）→ Opencpop の表記の音素の列。拼音として読めなければ None。"""
+    if syl in _OPENCPOP_ZERO:
+        return list(_OPENCPOP_ZERO[syl])
+    if syl in _OPENCPOP_FINALS and syl[0] in "aoe":
+        return [syl]
+    ini = next((i for i in _INITIALS + ("y", "w") if syl.startswith(i)), None)
+    if ini is None:
+        return None
+    fin = syl[len(ini):]
+    if fin == "i" and ini in _RETROFLEX:
+        return [ini, "ir"]
+    if fin == "i" and ini in _DENTAL:
+        return [ini, "i0"]
+    if ini in _PALATAL and fin.startswith("u"):
+        fin = "v" + fin[1:]
+    if fin == "ue":                        # lue・nue（lüe・nüe）
+        fin = "ve"
+    if fin not in _OPENCPOP_FINALS:
+        return None
+    return [ini, fin]
 
 
 def is_hanzi(ch: str) -> bool:
@@ -172,9 +203,11 @@ def hanzi_to_pinyin(text: str) -> List[str]:
     return out
 
 
-def syllables_to_phonemes(syllables: Sequence[str]) -> List[List[str]]:
+def syllables_to_phonemes(syllables: Sequence[str], scheme: str = "acv") -> List[List[str]]:
     """続けて歌う音節（漢字 1 字か拼音 1 音節ずつ）の並び → 音節ごとの音素の列。
-    漢字は続いている所をまとめて読む（拼音を挟むと熟語の表の当たりはそこで切れる）。"""
+    漢字は続いている所をまとめて読む（拼音を挟むと熟語の表の当たりはそこで切れる）。
+    scheme: 'acv'（ACV の表記）か 'opencpop'（Opencpop の表記）。"""
+    to_ph = pinyin_to_opencpop if scheme == "opencpop" else pinyin_to_phonemes
     pins: List[str] = []
     k = 0
     while k < len(syllables):
@@ -189,7 +222,7 @@ def syllables_to_phonemes(syllables: Sequence[str]) -> List[List[str]]:
             k += 1
     out = []
     for s, p in zip(syllables, pins):
-        ph = pinyin_to_phonemes(p)
+        ph = to_ph(p)
         if ph is None:
             raise KeyError(f"「{s}」の読み {p!r} を音素にできません（拼音か音素で書いてください）")
         out.append(ph)

@@ -1,0 +1,51 @@
+# 言語パック: 中国語（普通話。Opencpop の表記 = 声調なしの拼音を声母と韻母に分けたもの）
+#
+# 音素表 zh_opencpop.phonemes は LeapSinger の dict/zh_opencpop.phonemes と **同じ中身**（SVS で音響モデルと音素の名前を
+# 突き合わせるため。片方だけ変えないこと）。音節は (声母 | ゼロ声母の y w)(韻母): xiao = x iao、kuai = k uai、
+# juan = j van、ya = y a、yue = y ve。韻母は介音・鼻音の韻尾を含めて 1 つの音素。
+# i は舌尖母音を分けて、zhi chi shi ri の i を ir、zi ci si の i を i0 にする（ラベルの変換の --split_i）。
+#
+#   python -m preprocess.run --recipe configs/recipes/opencpop_train.yaml   # レシピに lang: zh_opencpop
+#   python -m duration_model.train --lang zh_opencpop ...
+#   python -m train --config configs/zh_opencpop.yaml                       # config に lang: zh_opencpop
+
+phonemes: zh_opencpop.phonemes
+# ピッチ（ノート）を担う核音素 = 韻母 35 と舌尖母音 ir i0。声母・y w は頭子音（音符の前へ出る）。
+# 韻尾が韻母に含まれるので、音符の中で核の後ろに残る子音（終声）は無い。
+nucleus:  [a, o, e, ai, ei, ao, ou, an, en, ang, eng, ong, er, i, u, v, ia, ie, iao, iu, ian, in, iang, ing, iong,
+           ua, uo, uai, ui, uan, un, uang, ve, van, vn, ir, i0]
+# 歌詞 → 音素は表（mora）でなく規則の G2P（svs/g2p_zh.py の Opencpop の表記）: 漢字（dict/zh_pinyin.json で拼音に）・拼音・音素を直接
+mora: null
+g2p: zh_opencpop
+
+# 有声母音（プロファイルの母音 floor 用）= 核と同じ
+vowels: [a, o, e, ai, ei, ao, ou, an, en, ang, eng, ong, er, i, u, v, ia, ie, iao, iu, ian, in, iang, ing, iong,
+         ua, uo, uai, ui, uan, un, uang, ve, van, vn, ir, i0]
+
+vowel_normalize: {}
+
+# 無音トークン。SP（無音）・AP（息）は pau に畳む
+silence: [pau, PAU, sil, sp, br, SP, AP]
+
+sil_map:
+  sil: pau
+  sp:  pau
+  br:  pau
+  SP:  pau
+  AP:  pau
+
+non_consonant_extra: []
+
+# 韻尾は韻母に含まれるので、句末に子音だけが残ることは無い
+final_consonants: false
+
+# 記号はすべて小文字。畳まない
+case_fold: false
+strip_stress_digits: false
+
+# 楽譜読み取り（svs/score_io.py）
+score:
+  rest_lyrics:    ["R", "r", "pau", "sil", "sp", "AP", "SP", ""]
+  melisma_lyrics: ["-", "+"]
+  melisma_vowel:  a
+  ust_encoding:   utf-8

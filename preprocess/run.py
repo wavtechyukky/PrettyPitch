@@ -33,6 +33,11 @@ def _enumerate_songs(recipe: dict, db_root: str) -> list[str]:
         wav_dir = os.path.join(db_root, recipe.get("wav_dir", "wav"))
         return sorted(os.path.splitext(os.path.basename(p))[0]
                       for p in glob.glob(os.path.join(wav_dir, "*.wav")))
+    if layout == "from_lab":                       # ラベルのある曲だけ（`lab` の書式。変換したラベルが別の所にあってもよい）
+        full = os.path.join(db_root, recipe["lab"])
+        pre, post = full.split("{song}", 1)
+        return sorted(p[len(pre):len(p) - len(post)]
+                      for p in glob.glob(glob.escape(pre) + "*" + glob.escape(post)))
     raise ValueError(f"unknown layout: {layout}")
 
 
