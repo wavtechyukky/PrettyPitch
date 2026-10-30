@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from duration_model import phoneset as _ps_mod
-from .duration_postprocess import Note, Phrase, _is_nucleus_ph
+from .duration_postprocess import Note, Phrase, _is_nucleus_ph, _syllabify
 
 _DICT_DIR = Path(__file__).resolve().parent.parent / 'dict'
 # 既定は日本語。他言語は dict/<lang>.mora を作り load_score(mora_table=...) か
@@ -373,7 +373,7 @@ def _resolve_phonemes(sn: ScoreNote, mora_table: Dict[str, List[str]],
 
 
 def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
-    """言語パックが g2p: を持つ言語（韓国語・中国語）で、歌詞の音素を先に決めておく。
+    """言語パックが g2p: を持つ言語（韓国語・中国語・英語）で、歌詞の音素を先に決めておく。英語は _apply_g2p_en。
 
     韓国語は前後の音節で発音が変わる（連音・鼻音化・濃音化など）、中国語は多音字の読みが熟語で決まるので、
     1 ノートずつは引けない。休符を挟まずに続くノートの並び（休符・音素を直接書いたノート・G2P で読めない歌詞で
@@ -382,6 +382,8 @@ def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
     メリスマの最後のノートへ移す（「밤 -」→ b a | a M、「看 -」→ k a | a N。終声は音を伸ばし終えてから閉じる）。
     """
     ps = phoneset or _ps_mod.active()
+    if ps.g2p == 'en':
+        return _apply_g2p_en(score_notes, ps)
     if ps.g2p == 'ko':
         from .g2p_ko import lyric_syllables, syllables_to_phonemes
     elif ps.g2p == 'zh_acv':
@@ -449,6 +451,55 @@ def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
         else:
             run.append(i)
     run_g2p(run)
+    return out
+
+
+def _apply_g2p_en(score_notes: List[ScoreNote], ps) -> List[ScoreNote]:
+    """英語（言語パックの g2p: en）: 歌詞を音素にし（svs/g2p_en.py。単語は発音辞書、[hh eh l ow] などは音素のまま）、
+    続く伸ばし記号（+）の音符へ音節を前から順に配る。「again」「+」は ax | g eh n になる。音節は核ごとに切り、核の間の子音は後ろの音節の頭にする（_syllabify。子音長モデルの学習と同じ
+    切り方。頭の子音は音符の前へ出るので、鳴る時刻は前の音符の終わり）。
+    音節より音符が多ければ、最後の音節の母音を伸ばし、その終わりの子音は最後の音符へ移す（韓国語・中国語の G2P と同じ）。
+    音符より音節が多ければ、残りは最後の音符にまとめる（1 音符に複数の音節。長さは等分される）。
+    辞書にも無く音素でもない歌詞は KeyError。
+    """
+    from .g2p_en import lyric_phonemes
+    mel = _melisma_lyrics(ps)
+    out = list(score_notes)
+
+    def is_mel(sn: ScoreNote) -> bool:
+        return (not sn.is_rest and sn.phonemes is None
+                and (sn.lyric is None or sn.lyric == '' or sn.lyric in mel))
+
+    i = 0
+    while i < len(out):
+        sn = out[i]
+        if sn.is_rest or is_mel(sn):
+            i += 1
+            continue
+        phs = list(sn.phonemes) if sn.phonemes is not None else lyric_phonemes(sn.lyric, ps)
+        if phs is None:
+            raise KeyError(f'歌詞 {sn.lyric!r} は英語の発音辞書にありません'
+                           f'（音素で書くときは [hh eh l ow] のように [ ] で囲んでください）')
+        j = i + 1                                # 続く伸ばし記号の音符 [i + 1, j)
+        while j < len(out) and is_mel(out[j]):
+            j += 1
+        n = j - i
+        syls = [list(s) for s in _syllabify(phs, ps)]
+        if len(syls) >= n:
+            per = syls[:n - 1] + [[p for s in syls[n - 1:] for p in s]]
+        else:
+            per = syls
+            last = per[-1]
+            nuc = max((m for m, p in enumerate(last) if ps.is_nucleus(p)), default=None)
+            if nuc is not None:
+                vowel, coda = last[nuc], last[nuc + 1:]
+                per[-1] = last[:nuc + 1]
+                rest = [[vowel] for _ in range(n - len(per))]
+                rest[-1] += coda
+                per += rest
+        for k, p in enumerate(per):              # 核の無い音節で配れなかった音符は、そのまま（直前の母音を伸ばす）
+            out[i + k] = replace(out[i + k], phonemes=p)
+        i = j
     return out
 
 

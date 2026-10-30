@@ -1,0 +1,53 @@
+# 言語パック: 英語（en_full。手持ちの英語の歌声データセットを全部読める版）
+#
+# 音素表 en_full.phonemes は LeapSinger の dict/en_full.phonemes と **同じ中身**（SVS で音響モデルと音素の名前を
+# 突き合わせるため。片方だけ変えないこと）。先頭の 46 行は en.phonemes と同じ並び。
+# en.yaml（NUS-48E 向け）との違い:
+#   - 核に oh（イギリス英語の LOT 母音）を足す。音節を担う el / en は子音のまま（LeapSinger の en_full.yaml と同じ）
+#   - 句末・休みの前の子音（終声）も子音長モデルで予測する（final_consonants: true）。英語は閉じた音節で句が
+#     終わるのが普通（AIdol で 1197 回）。既定（false）では一律 80 ms になる
+#   - 息の印 EP も無音に畳む
+#   - 歌詞は英単語で書ける（g2p: en。svs/g2p_en.py が発音辞書 dict/en_cmudict.txt で引く）。音素で書くときは
+#     [hh eh l ow]・空白で区切った 2 つ以上の音素・子音 1 つ。何音節もある語は、続く音符に + を書くと音節を前から配る
+#
+#   python -m preprocess.run --recipe <レシピ>          # レシピに lang: en_full
+#   python -m duration_model.train --lang en_full ...
+#   python -m train --config <config>                     # config に lang: en_full
+
+phonemes: en_full.phonemes
+# ピッチ（ノート）を担う核音素 = 母音 17（ax・oh を含む）。cl・el・en・声の効果（vf vk vg qh）は子音
+nucleus:  [aa, ae, ah, ao, aw, ay, eh, er, ey, ih, iy, ow, oy, uh, uw, ax, oh]
+# mora: 英語は書記素 → 音素を最長一致の表では表せない（en.yaml を参照）。代わりに発音辞書の G2P
+mora: null
+g2p: en
+
+# 有声母音（プロファイルの母音 floor 用）= 核と同じ
+vowels: [aa, ae, ah, ao, aw, ay, eh, er, ey, ih, iy, ow, oy, uh, uw, ax, oh]
+
+vowel_normalize: {}
+
+# 無音トークン（SP・AP・EP はラベルにそのまま出てくるので、ここでも pau に畳む）
+silence: [pau, PAU, sil, sp, br, AP, SP, EP]
+
+sil_map:
+  sil: pau
+  sp:  pau
+  br:  pau
+  SP:  pau
+  AP:  pau
+  EP:  pau
+
+non_consonant_extra: []
+
+# 句末・休みの前の終声も子音長モデルで予測する（ko.yaml と同じ）
+final_consonants: true
+
+case_fold: lower
+strip_stress_digits: true
+
+# 楽譜読み取り（svs/score_io.py）。en.yaml と同じ
+score:
+  rest_lyrics:    ["R", "r", "pau", "sil", "sp", "AP", "SP", ""]
+  melisma_lyrics: ["+"]
+  melisma_vowel:  ah
+  ust_encoding:   utf-8
