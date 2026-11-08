@@ -60,6 +60,9 @@ class PhoneSet:
     final_consonants: bool = False
     # 歌詞 → 音素を表（mora）でなく規則で引く言語の G2P の名前（'ko' = svs/g2p_ko.py）。None = mora 表
     g2p: Optional[str] = None
+    # 伸ばしの記号（例 '-'）。音符をまたぐ母音を音符ごとに分け、2 つ目からをこの記号で書いたラベル用。
+    # load(hold=...) が音素表と核の末尾に足す（それまでの番号は変わらない）。None = 使わない
+    hold_symbol: Optional[str] = None
     score: Mapping = field(default_factory=dict)
     phonemes_path: Optional[Path] = None
     nucleus_path: Optional[Path] = None
@@ -114,7 +117,8 @@ class PhoneSet:
         return ph in self.cons_set
 
     def digest(self) -> dict:
-        """派生集合の中身を比較可能な形で返す（回帰テスト用）。"""
+        """派生集合の中身を比較可能な形で返す（回帰テスト用）。伸ばしの記号は使うときだけ載せる。"""
+        extra = {'hold_symbol': self.hold_symbol} if self.hold_symbol is not None else {}
         return {
             'lang': self.lang,
             'phonemes': list(self.phonemes),
@@ -130,6 +134,7 @@ class PhoneSet:
             'strip_stress_digits': self.strip_stress_digits,
             'final_consonants': self.final_consonants,
             'g2p': self.g2p,
+            **extra,
         }
 
 
@@ -148,13 +153,17 @@ def _pack_path(lang: str) -> Path:
 @lru_cache(maxsize=None)
 def load(lang: str = DEFAULT_LANG,
          phonemes: Optional[str] = None,
-         nucleus: Optional[str] = None) -> PhoneSet:
+         nucleus: Optional[str] = None,
+         hold: Optional[str] = None) -> PhoneSet:
     """`dict/<lang>.yaml` から PhoneSet を構築する。
 
     phonemes / nucleus を渡すと、その項目だけパックの指定を上書きする
     （例: --lang ja --phonemes dict/<独自>.phonemes で、音素表だけ差し替える）。
     yaml の nucleus: はリスト直書きでもファイル名でもよい。引数の nucleus は
     ファイル名のみ（この関数は lru_cache 済みで、リストは hash できない）。
+    hold（伸ばしの記号、例 '-'）を渡すと、音素表に無ければ末尾に足し、核にも入れる。
+    それまでの音素の番号は変わらないので、記号を使わないモデル・シャードとも番号がそろう。
+    伸ばしの記号は核なので、学習ではその区間の音高を 1 つの音符として持つ。
     """
     pack_path = _pack_path(lang)
     pack = yaml.safe_load(pack_path.read_text(encoding='utf-8')) or {}
@@ -201,6 +210,14 @@ def load(lang: str = DEFAULT_LANG,
     vowels = frozenset(pack.get('vowels') or [])
     silence = frozenset(pack.get('silence') or ['pau'])
 
+    if hold is not None:
+        hold = str(hold)
+        if not hold or hold in silence or hold == 'pau':
+            raise ValueError(f'伸ばしの記号 {hold!r} は使えません（空・無音の記号は不可）')
+        if hold not in phs:
+            phs = phs + [hold]                     # 末尾に足す: それまでの番号は変わらない
+        nuclei = nuclei | {hold}
+
     non_consonant = (frozenset({'pau'}) | nuclei | frozenset(vowel_norm)
                      | frozenset(pack.get('non_consonant_extra') or []))
     consonants = tuple(ph for ph in phs if ph not in non_consonant)
@@ -220,6 +237,7 @@ def load(lang: str = DEFAULT_LANG,
         strip_stress_digits=bool(pack.get('strip_stress_digits', False)),
         final_consonants=bool(pack.get('final_consonants', False)),
         g2p=pack.get('g2p') or None,
+        hold_symbol=hold,
         score=dict(pack.get('score') or {}),
         phonemes_path=ph_path,
         nucleus_path=nu_path,

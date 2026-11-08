@@ -131,11 +131,16 @@ def main():
     from duration_model import phoneset as _ps_mod
     _r = _yaml.safe_load(open(args.recipe, encoding="utf-8")) or {}
     _lang = args.lang or _r.get("lang") or _ps_mod.DEFAULT_LANG
-    _ps = _ps_mod.set_default(_ps_mod.load(_lang, args.phonemes))
-    print(f"言語パック: {_ps.lang}  音素{_ps.n_phonemes} / 無音写像 {sorted(_ps.sil_map)}")
+    # レシピの hold_symbol: 音符をまたぐ母音を「ay -」のように分けたラベルの伸ばしの記号。
+    # 音素表の末尾に足すので、それまでの番号は変わらない（学習の設定の model.hold_symbol と同じ値にする）
+    _hold = _r.get("hold_symbol")
+    _ps = _ps_mod.set_default(_ps_mod.load(_lang, args.phonemes, None, _hold))
+    print(f"言語パック: {_ps.lang}  音素{_ps.n_phonemes} / 無音写像 {sorted(_ps.sil_map)}"
+          + (f"  伸ばしの記号 {_hold!r}" if _hold is not None else ""))
+    vocab = (Vocab.load(args.phonemes) if args.phonemes and _hold is None
+             else Vocab(list(_ps.phonemes)))
     run_recipe(args.recipe, out_root=args.out_root, frames=FrameSpec(hop=args.hop),
-               limit=args.limit,
-               vocab=Vocab.load(args.phonemes) if args.phonemes else Vocab(list(_ps.phonemes)))
+               limit=args.limit, vocab=vocab)
 
 
 if __name__ == "__main__":

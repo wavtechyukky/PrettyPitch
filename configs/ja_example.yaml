@@ -29,6 +29,13 @@ model:
   conditioner: convnext        # 非ゲート ConvNeXt-1D conditioner（現状これだけ）
   convnext_dilations: [1, 5, 12, 24]   # convnext block dilations; len = block count,
                                # RF ≈ 1 + 6·Σd（この 4 ブロックで ≈253 フレーム）
+  # encoder: notes             # 入力を音素の列と音符の列の 2 本で読む（guide/f0_model.md「音符エンコーダ」）。
+                               # 新しく学習するモデルにはこちらを勧める。省略 = phonemes（配布ウェイトはこちら）。
+                               # 入出力は同じなので、ONNX の形も変わらない
+  # hold_symbol: "-"           # 伸ばしの記号。音符をまたぐ母音を「ay -」のように分けたラベルで学習するとき、
+                               # レシピの hold_symbol と同じ値を書く（音素表と核の末尾に足される）。
+                               # 日本語の同梱データは伸ばしを母音の繰り返しで書いてあるので要らない。
+                               # --set で渡すときは引用符で囲む: --set 'model.hold_symbol="-"'
   spk_dim: 32                  # >0 = low-dim speaker bank + projection; n_speakers from spk_map
   n_styles: 3                  # style 0 = default, 1 = ritsu-normal, 2 = ritsu-soft
   pitch_center: 60.0           # model pitch input = (midi - center) / scale

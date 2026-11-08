@@ -39,6 +39,19 @@ Two terms that are constant over time are added to this. One is the speaker bank
 
 **Style moves the F0 very little.** Across the three styles of the bundled weights, the Ritsu kire, normal and soft banks, the generated F0 differs by a median of 3.5 cents, which is not audible. The three banks differ mainly in timbre; their pitch behaviour is close. Measured on the training data, the vibrato depth is about the same and only the amount of expression shrinks, by 13 to 17 per cent from kire to normal to soft. The embedding is trained: on held-out phrases, giving the correct style gives the lowest reconstruction error for all three.
 
+### Note encoder (`model.encoder: notes`)
+
+This encoder replaces steps 1–3 above and reads the input as two streams, one of phonemes and one of notes. Its inputs (phoneme ids, pitch, durations) and outputs are the same, so the ONNX inputs and outputs do not change either. It is the recommended choice for newly trained models.
+
+1. The hold symbol (`model.hold_symbol`, e.g. `-`) is folded into the preceding vowel before any embedding. The network never learns the symbol itself.
+2. Phoneme stream: `[phoneme embedding | log1p duration | position in the phoneme]`, stretched by the merged durations.
+3. Note stream: a note starts at every nucleus, every hold symbol and the first pau of a run. `[pitch projection × (1 − rest) | rest flag | log1p note length | position in the note]`, stretched by the note lengths. Pau runs, and onset consonants after a rest, become rest notes.
+4. The two streams are concatenated and a 1×1 conv takes them to 128 dimensions. Everything after that (ConvNeXt, denoiser) is the same as above.
+
+The hold symbol is for labels in which a vowel sung over several notes is split per note, with every part after the first written as the symbol (`ay -`). "wan~" (an held over two notes) and "wan an" (an sung again) have the same note stream and differ only in the phoneme stream, so the model can learn them apart. Writing the same `hold_symbol` in the recipe and the training config appends the symbol to the end of the phoneme table (existing ids do not change). [tools/hold_labels/README.md](../tools/hold_labels/README.md) explains how to make such labels.
+
+Labels that write a held vowel as a repeat (`a a`) work too. The bundled Japanese data is written that way and always splits the vowel where the pitch changes, so it needs no hold symbol; a note then starts at every nucleus. The default is `phonemes` (the steps above), which the bundled weights use.
+
 ## Denoiser
 
 It is a DDPM that predicts x0 directly. The default is 10 steps with a cosine β schedule.

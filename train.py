@@ -396,6 +396,15 @@ def ckpt_config(cfg, ds, vocab, nucleus_list, n_speakers, n_styles) -> dict:
     if abs(float(ds.frame_rate) - sr / hop) > 1e-6:
         raise ValueError(f"config audio.sr/hop = {sr}/{hop} ({sr / hop:.6f} fps) but the shards were "
                          f"preprocessed at {float(ds.frame_rate):.6f} fps — fix the config or re-run preprocess")
+    # model.encoder: notes（伸ばしの記号 hold_symbol を前の母音に足し込み、音素の列と音符の列で読む）。
+    # model.hold_symbol は、伸ばしの記号で書いたラベルで学習したことの印。エンコーダに依らず ckpt に残す
+    # （ホストはこれを見て、伸ばしの母音を記号で渡すかどうかを決める）。
+    # 既定（phonemes・記号なし）では ckpt の中身は今までと同じ（キーも足さない）
+    encoder = {}
+    if str(m.get("encoder", "phonemes")) != "phonemes":
+        encoder = {"encoder": str(m["encoder"]), "hold_symbol": m.get("hold_symbol")}
+    elif m.get("hold_symbol") is not None:
+        encoder = {"hold_symbol": str(m["hold_symbol"])}
     return {
         "arch": "f0_3ch_reflow" if arch == "reflow" else "f0_3ch_diffusion",
         "n_steps": int(m.get("n_steps", 10)),
@@ -419,7 +428,23 @@ def ckpt_config(cfg, ds, vocab, nucleus_list, n_speakers, n_styles) -> dict:
         "baseline_sigma_sec": float(dcp.get("baseline_sigma_sec", 0.02)),
         "pitch_cfg": dict(p),
         "decomp_cfg": dict(dcp),
+        **encoder,
     }
+
+
+def encoder_kwargs(ckpt_cfg: dict) -> dict:
+    """model.encoder: notes の引数（核・pau・伸ばしの記号の番号）を ckpt の音素表から作る。"""
+    enc = str(ckpt_cfg.get("encoder", "phonemes"))
+    if enc == "phonemes":
+        return {}
+    ix = {p: i for i, p in enumerate(ckpt_cfg["phonemes"])}
+    hold = ckpt_cfg.get("hold_symbol")
+    if hold is not None and hold not in ix:
+        raise ValueError(f"hold_symbol {hold!r} is not in the phoneme table (--phonemes?)")
+    return dict(encoder=enc,
+                nucleus_ids=[ix[p] for p in ckpt_cfg["nucleus"] if p in ix and p != hold],
+                pau_id=ix.get("pau", 0),
+                hold_id=None if hold is None else ix[hold])
 
 
 def build_model(ckpt_cfg: dict):
@@ -430,6 +455,7 @@ def build_model(ckpt_cfg: dict):
         n_styles=int(ckpt_cfg["n_styles"]),
         conditioner=str(ckpt_cfg.get("conditioner", "convnext")),
         convnext_dilations=ckpt_cfg.get("convnext_dilations"),
+        **encoder_kwargs(ckpt_cfg),
     )
     if str(ckpt_cfg.get("arch", "f0_3ch_diffusion")) == "f0_3ch_reflow":
         return F0Reflow3ch(num_steps=int(ckpt_cfg.get("infer_steps", 1)), **common)
@@ -460,10 +486,13 @@ def train(args):
 
     # 言語は config の lang: が宣言する（既定 ja）。--phonemes / --nucleus は
     # その項目だけを上書きする。音素表・核音素はどちらも言語パック経由で解決するので、
-    # 学習・前処理・推論で同じ 1 か所を見ることになる。
+    # 学習・前処理・推論で同じ 1 か所を見ることになる。model.hold_symbol（伸ばしの記号）は
+    # 音素表と核の末尾に足す（前処理のレシピの hold_symbol と同じ値にする）。
     from duration_model import phoneset as _ps_mod
     lang = str(cfg.get("lang", _ps_mod.DEFAULT_LANG))
-    ps = _ps_mod.set_default(_ps_mod.load(lang, args.phonemes, args.nucleus))
+    hold = cfg["model"].get("hold_symbol")
+    ps = _ps_mod.set_default(_ps_mod.load(lang, args.phonemes, args.nucleus,
+                                          None if hold is None else str(hold)))
     vocab = Vocab(list(ps.phonemes))
     nucleus = frozenset(ps.nuclei)
     print(f"言語パック: {ps.lang}  音素{ps.n_phonemes} / 核{len(nucleus)}")
@@ -494,10 +523,16 @@ def train(args):
     eval_ds = PrettyPitchF0Dataset(args.data_dirs, split="eval", pau_aug=False, **ds_kw)
     frame_rate = train_ds.frame_rate
     assert train_ds.n_phonemes == vocab.n_phonemes, \
-        f"shard n_phonemes={train_ds.n_phonemes} != vocab {vocab.n_phonemes} (--phonemes?)"
+        (f"shard n_phonemes={train_ds.n_phonemes} != vocab {vocab.n_phonemes} "
+         f"(--phonemes? レシピの hold_symbol と model.hold_symbol はそろっている?)")
 
     ck_cfg = ckpt_config(cfg, train_ds, vocab, sorted(nucleus), n_speakers, n_styles)
     model = build_model(ck_cfg).to(device)
+    if ck_cfg.get("encoder"):
+        print(f"encoder: {ck_cfg['encoder']}  hold_symbol={ck_cfg.get('hold_symbol')!r}"
+              f"（伸ばしの記号は前の母音に足し込み、音素の列と音符の列で読む）")
+    elif ck_cfg.get("hold_symbol") is not None:
+        print(f"hold_symbol={ck_cfg['hold_symbol']!r}（伸ばしの記号を 1 つの音素として読む）")
     use_gan = bool(gan.get("enabled", True))
     D = MultiScaleDisc(n_scales=3).to(device) if use_gan else None
     print("G %.3fM%s  n_speakers=%d n_styles=%d  frame_rate=%.4f  FIR=%dtap" % (

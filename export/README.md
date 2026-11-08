@@ -41,6 +41,14 @@ DDPM（`arch: diffusion`）と rectified flow（`arch: reflow`）は同じスク
 
 **検証**: ORT vs torch は 0.6 / 3 / 12 / 40 s の 4 長さで最大 2.6e-6（両アーキ）。個人情報のバイト走査 OK。
 
+**音符エンコーダ（`model.encoder: notes`）のモデル**も、同じスクリプト・同じ入出力で書き出せる。グラフの中で伸ばしの記号を前の母音に足し込み、音素の列と音符の列を作る（長さ展開は `prettypitch/frontend.py` の、長さ 0 の音素があっても壊れない形）。metadata には次のキーが足される。どれも無いモデルは今までと同じ。
+
+| キー | いつ | 内容 |
+|---|---|---|
+| `encoder` | `model.encoder` を指定したモデル | `notes` |
+| `hold_symbol` | 伸ばしの記号で書いたラベルで学習したモデル（`model.hold_symbol`） | 伸ばしの記号（例 `-`）。ホストはこれがあるとき、伸ばしの音符で続く母音を記号で渡す。無いモデルには、今までどおり同じ母音を繰り返して渡す |
+| `hold_spec` | 同上 | 記号の渡し方（記号の `pitch_midi` はその音符の音高、`durations` は母音のうちその音符の分） |
+
 **メモリ（Apple Silicon・ORT CPU・子プロセスで RSS 監視）** — NHVSing / LeapSinger で起きた「中間テンソルが入力長に比例して爆発する」事故の再発確認。増え方は**長さに比例し、2 次の項なし**:
 
 | 長さ | フレーム | DDPM 実行時の増分 | reflow 実行時の増分 | DDPM 時間 | reflow 時間 |

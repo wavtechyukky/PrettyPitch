@@ -99,7 +99,13 @@ class F0Wrapper(nn.Module):
 
     def _cond(self, tokens, pitch_midi, durations, spk_id, style_mix, noise):
         m = self.m
-        c = m.conditioner(self._frame_features(tokens, pitch_midi, durations, noise))
+        if getattr(m, 'encoder_type', 'phonemes') == 'notes':
+            # NoteInputEncoder はもともとループ無し。フレーム数は noise の形から取る（動的な T のまま）
+            pitch = (pitch_midi - self.center) / self.scale
+            feat = m.encoder(tokens, pitch, durations, frames=noise[:, 0, 0, :])
+        else:
+            feat = self._frame_features(tokens, pitch_midi, durations, noise)
+        c = m.conditioner(feat)
         if m.spk_bank is not None:
             c = c + m.spk_proj(m.spk_bank(spk_id)).unsqueeze(-1)
         if m.style_emb is not None:
@@ -152,8 +158,9 @@ def synthetic_phrase(cfg: dict, seconds: float, seed: int = 0):
     """検証・計測用の適当なフレーズ（pau + 子音/核の繰り返し）。"""
     rng = np.random.default_rng(seed)
     fr = float(cfg['frame_rate'])
-    phonemes = list(cfg['phonemes']); nuc = [p for p in cfg['nucleus'] if p in phonemes]
-    cons = [p for p in phonemes if p not in nuc and p != 'pau'][:20]
+    hold = cfg.get('hold_symbol')                      # 伸ばしの記号（model.hold_symbol。無ければ None）
+    phonemes = list(cfg['phonemes']); nuc = [p for p in cfg['nucleus'] if p in phonemes and p != hold]
+    cons = [p for p in phonemes if p not in nuc and p not in ('pau', hold)][:20]
     ph2id = {p: i for i, p in enumerate(phonemes)}
     toks, durs, pitch = [ph2id['pau']], [int(0.25 * fr)], [0.0]
     total = durs[0]; cur = 60.0
@@ -163,6 +170,11 @@ def synthetic_phrase(cfg: dict, seconds: float, seed: int = 0):
         dc = int(max(1, rng.normal(0.07, 0.02) * fr)); dv = int(max(1, rng.normal(0.35, 0.15) * fr))
         toks += [ph2id[c], ph2id[v]]; durs += [dc, dv]; pitch += [pitch[-1], cur]
         total += dc + dv
+        if hold in ph2id and rng.random() < 0.3:       # 母音を次の音符へ伸ばす（伸ばしの記号 + 次の音高）
+            cur = float(np.clip(cur + rng.integers(-3, 4), 52, 76))
+            dh = int(max(1, rng.normal(0.3, 0.1) * fr))
+            toks.append(ph2id[hold]); durs.append(dh); pitch.append(cur)
+            total += dh
     toks.append(ph2id['pau']); durs.append(int(0.25 * fr)); pitch.append(pitch[-1])
     return (torch.tensor([toks]), torch.tensor([pitch], dtype=torch.float32), torch.tensor([durs]))
 
@@ -300,6 +312,15 @@ def metadata(cfg: dict, wrapper: F0Wrapper, ckpt_path: str, maps: dict) -> dict:
         'n_speakers': int(cfg.get('n_speakers', 0)), 'n_styles': int(cfg.get('n_styles', 0)),
         'spk_map': maps.get('spk_map', {}), 'style_map': maps.get('style_map', {}),
         'lang': cfg.get('lang'),
+        **({'encoder': cfg['encoder']} if cfg.get('encoder') else {}),
+        # 伸ばしの記号で書いたラベルで学習したモデルだけ。ホストはこれがあれば、伸ばしの音符で続く母音を
+        # 記号で渡す（無いモデルには、今までどおり同じ母音を繰り返して渡す）
+        **({'hold_symbol': cfg['hold_symbol'],
+            'hold_spec': 'a vowel held over several notes = the vowel, then one hold_symbol token per '
+                         'further note (pitch_midi = that note\'s pitch, durations = its frames inside '
+                         'the vowel).' + (' The model merges hold tokens into the vowel before reading.'
+                                          if cfg.get('encoder') == 'notes' else '')}
+           if cfg.get('hold_symbol') is not None else {}),
         'source_ckpt': Path(ckpt_path).name,
         'opset': OPSET,
         'config': {k: v for k, v in cfg.items() if k not in ('decomp_cfg', 'pitch_cfg')},

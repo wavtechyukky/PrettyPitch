@@ -17,6 +17,10 @@ Design notes — what shapes this model:
      DiffWave-standard [1,2,4,...,128]×2 (16 gated blocks). The denoiser's receptive
      field is ≈1021 frames ≈ 5.9 s @172.27 fps — ample for 4.5-7.5 Hz vibrato and
      note-scale intonation. Checkpoints trained with other stacks cannot load.
+  5. **Encoder** (``model.encoder``): ``phonemes`` (default, InputEncoder) reads one pitch
+     per phoneme. ``notes`` (NoteInputEncoder) takes the same inputs but rebuilds them into
+     a phoneme stream and a note stream, so a vowel held over several notes (written by
+     the host as the vowel + hold tokens) stays one phoneme. Same ONNX inputs and outputs.
 
 Reverse process: DDPM (``arch: diffusion``, default 10 ancestral steps, cosine β schedule,
 **x0 direct prediction**) or rectified flow (``arch: reflow``, 1 Euler step). Both share
@@ -40,6 +44,8 @@ import math
 
 import torch
 import torch.nn as nn
+
+from prettypitch.frontend import frames_for, length_regulate, position_in_token
 
 OUT_CH = 2          # diffusion/reflow channels: plain, vibrato (v/uv is a separate head)
 STEP_EMB = 64        # diffusion step embedding dim
@@ -167,6 +173,75 @@ class InputEncoder(nn.Module):
         return self.proj(frame_feat.transpose(1, 2))                      # [B, out_ch, T]
 
 
+class NoteInputEncoder(nn.Module):
+    """InputEncoder's inputs read as a phoneme stream and a note stream (``model.encoder: notes``).
+
+    Hosts send what they send to InputEncoder: phoneme ids, a per-phoneme note pitch and
+    per-phoneme durations. A vowel held over several notes is written as the vowel followed
+    by hold tokens (``hold_id``, e.g. "-"), each carrying its own note's pitch. Before any
+    embedding the tokens are rebuilt into
+
+      * a phoneme stream — hold tokens merge into the phoneme before them, so the held
+        vowel stays ONE phoneme (one embedding, one position ramp). The hold token never
+        reaches an embedding, so the network never learns it;
+      * a note stream — a note starts at every nucleus and hold token, at the first pau of a
+        run (a rest note) and at the first token; a consonant belongs to the note in
+        progress. Note pitch = the pitch of the note's first token, masked on rest notes.
+
+    Each stream is expanded by its own durations and the two are concatenated per frame:
+      phoneme [phon_emb 64 | log1p(dur) | position] + note [pitch_proj 32 · (1 − rest) | rest |
+      log1p(note dur) | position] → 1×1 conv proj → [B, out_ch, T].
+    """
+
+    def __init__(self, n_phonemes: int, nucleus_ids, pau_id: int = 0, hold_id: int | None = None,
+                 phon_dim: int = 64, pitch_dim: int = 32, out_ch: int = 128):
+        super().__init__()
+        self.phon_emb = nn.Embedding(n_phonemes, phon_dim)
+        self.pitch_proj = nn.Linear(1, pitch_dim)
+        is_nucleus = torch.zeros(n_phonemes, dtype=torch.bool)
+        is_nucleus[torch.as_tensor(list(nucleus_ids), dtype=torch.long)] = True
+        self.register_buffer("is_nucleus", is_nucleus, persistent=False)   # rebuilt from the ckpt config
+        self.pau_id = int(pau_id)
+        self.hold_id = -1 if hold_id is None else int(hold_id)
+        feat_dim = (phon_dim + 2) + (pitch_dim + 3)
+        self.proj = nn.Sequential(nn.Conv1d(feat_dim, out_ch, 1), nn.PReLU(out_ch),
+                                  nn.Conv1d(out_ch, out_ch, 1))
+
+    def streams(self, phoneme_ids, pitch, durations):
+        """Token inputs [B, L] -> (phoneme ids, phoneme durations, note pitch, note rest, note
+        durations), each [B, L] with unused trailing slots at duration 0."""
+        ids, d, p = phoneme_ids.long(), durations.long(), pitch.float()
+        hold = ids == self.hold_id
+        group = (torch.cumsum((~hold).long(), dim=1) - 1).clamp(min=0)
+        ph_dur = torch.zeros_like(d).scatter_add(1, group, d)
+        ph_ids = torch.zeros_like(ids).scatter_add(1, group, ids * (~hold).long())
+
+        is_pau = ids == self.pau_id
+        prev_pau = torch.cat([torch.zeros_like(is_pau[:, :1]), is_pau[:, :-1]], dim=1)
+        first = torch.cat([torch.ones_like(is_pau[:, :1]), torch.zeros_like(is_pau[:, 1:])], dim=1)
+        nuc = self.is_nucleus[ids] & ~hold
+        start = nuc | hold | (is_pau & ~prev_pau) | first
+        rest = start & ~nuc & ~hold                            # a pau run, or consonants before any note
+        note = torch.cumsum(start.long(), dim=1) - 1
+        note_dur = torch.zeros_like(d).scatter_add(1, note, d)
+        note_pitch = torch.zeros_like(p).scatter_add(1, note, p * start.float())
+        note_rest = torch.zeros_like(p).scatter_add(1, note, rest.float())
+        return ph_ids, ph_dur, note_pitch, note_rest, note_dur
+
+    def forward(self, phoneme_ids, pitch, durations, frames=None):
+        if frames is None:
+            frames = frames_for(durations)
+        ph_ids, ph_dur, n_pitch, n_rest, n_dur = self.streams(phoneme_ids, pitch, durations)
+        ph_feat = torch.cat([self.phon_emb(ph_ids), torch.log1p(ph_dur.float()).unsqueeze(-1)], dim=-1)
+        nt_feat = torch.cat([self.pitch_proj(n_pitch.unsqueeze(-1)) * (1.0 - n_rest).unsqueeze(-1),
+                             n_rest.unsqueeze(-1), torch.log1p(n_dur.float()).unsqueeze(-1)], dim=-1)
+        feat = torch.cat([length_regulate(ph_feat, ph_dur, frames),
+                          position_in_token(ph_dur, frames).unsqueeze(-1),
+                          length_regulate(nt_feat, n_dur, frames),
+                          position_in_token(n_dur, frames).unsqueeze(-1)], dim=-1)
+        return self.proj(feat.transpose(1, 2))                                # [B, out_ch, T]
+
+
 class ConvNeXtBlock1d(nn.Module):
     """1D ConvNeXt block (Liu et al. 2022, own implementation): depthwise conv →
     channel LayerNorm → pointwise 4× → GELU → pointwise → layer-scaled residual.
@@ -238,14 +313,22 @@ class _F0Base(nn.Module):
 
     def __init__(self, n_phonemes: int = 50, n_speakers: int = 0, spk_dim: int = 32,
                  n_styles: int = 0, hidden: int = 256, conditioner: str = "convnext",
-                 convnext_dilations=None):
+                 convnext_dilations=None, encoder: str = "phonemes", nucleus_ids=(),
+                 pau_id: int = 0, hold_id: int | None = None):
         super().__init__()
         if conditioner != "convnext":
             raise ValueError(f"conditioner={conditioner!r}: only 'convnext' is supported "
                              f"(a checkpoint trained with another conditioner cannot load)")
         self.hidden = hidden
         self.conditioner_type = conditioner
-        self.encoder = InputEncoder(n_phonemes, out_ch=128)
+        self.encoder_type = encoder
+        if encoder == "phonemes":
+            self.encoder = InputEncoder(n_phonemes, out_ch=128)
+        elif encoder == "notes":
+            self.encoder = NoteInputEncoder(n_phonemes, nucleus_ids, pau_id=pau_id, hold_id=hold_id,
+                                            out_ch=128)
+        else:
+            raise ValueError(f"encoder={encoder!r}: 'phonemes' or 'notes'")
         self.conditioner = ConvNeXtConditioner(in_ch=128, ch=128, cond_out=hidden,
                                                dilations=convnext_dilations)
         self.denoiser = Denoiser3ch(ch=64, cond_dim=hidden, step_dim=STEP_EMB)
@@ -290,9 +373,10 @@ class F0Diffusion3ch(_F0Base):
 
     def __init__(self, n_steps: int = 10, n_phonemes: int = 50,
                  n_speakers: int = 0, spk_dim: int = 32, n_styles: int = 0,
-                 hidden: int = 256, conditioner: str = "convnext", convnext_dilations=None):
+                 hidden: int = 256, conditioner: str = "convnext", convnext_dilations=None,
+                 **encoder_kw):
         super().__init__(n_phonemes, n_speakers, spk_dim, n_styles, hidden, conditioner,
-                         convnext_dilations=convnext_dilations)
+                         convnext_dilations=convnext_dilations, **encoder_kw)
         self.n_steps = n_steps
         self.step_emb = DiffusionStepEmbedding(n_steps, emb_dim=STEP_EMB, proj_dim=STEP_EMB)
         betas = cosine_betas(n_steps)
@@ -335,9 +419,9 @@ class F0Reflow3ch(_F0Base):
 
     def __init__(self, n_phonemes: int = 50, n_speakers: int = 0, spk_dim: int = 32,
                  n_styles: int = 0, hidden: int = 256, conditioner: str = "convnext",
-                 convnext_dilations=None, num_steps: int = 1):
+                 convnext_dilations=None, num_steps: int = 1, **encoder_kw):
         super().__init__(n_phonemes, n_speakers, spk_dim, n_styles, hidden, conditioner,
-                         convnext_dilations=convnext_dilations)
+                         convnext_dilations=convnext_dilations, **encoder_kw)
         self.num_steps = num_steps
         self.step_emb = ContinuousTimeEmbedding(emb_dim=STEP_EMB, proj_dim=STEP_EMB)
 
