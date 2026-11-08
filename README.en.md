@@ -17,10 +17,12 @@ Instead of note pitches, PrettyPitch estimates a **representative pitch value** 
 This one substitution buys several things at once:
 
 - **No score alignment.** Preprocessing uses the lab and the wav as they are.
-- **Multilingual support is straightforward.** A language is defined by one language pack, `dict/<lang>.yaml`, named by `lang:` in the training config and in the preprocessing recipe. SVS rendering (`svs/`) additionally needs a lyric-to-phoneme table `dict/<lang>.mora` (`--mora_table`). It is not fully language-agnostic — see [Notes](#notes).
+- **Multilingual support is straightforward.** A language is defined by one language pack, `dict/<lang>.yaml`, named by `lang:` in the training config and in the preprocessing recipe. SVS rendering (`svs/`) additionally needs a lyric-to-phoneme step (`dict/ja.mora` for Japanese, the bundled G2P for Korean, Chinese and English — see [Languages other than Japanese](#languages-other-than-japanese)). It is not fully language-agnostic — see [Notes](#notes).
 - **Off-pitch singers are fine as training data.** The teacher is the residual against the pitch that was actually sung, so out-of-tune singing does not corrupt training. At inference the model sings the pitch the user asks for.
 
 The model itself is a 3-channel generative model. A DiffWave-style DDPM (default 10 steps, x0 direct prediction) and rectified flow (1 step) are both available through `model.arch` in the config. It generates plain (expression), vibrato and v/uv, reconstructed as `F0 = 2^(baseline + plain + vibrato)` (next section). Speakers use a low-dimensional bank (spk_dim=32); styles (e.g. Ritsu default / normal / soft) are additive embeddings.
+
+Besides reading the input per phoneme (the default, used by the bundled weights), the model can use a **note encoder** (`model.encoder: notes`) that reads it as two streams, one of phonemes and one of notes. Trained on labels that write a vowel held over several notes with a hold symbol (`ay -`; [tools/hold_labels/](tools/hold_labels/README.en.md) makes them with GAME), it tells "wan~" from "wan an". The inputs and outputs are the same, so the ONNX shape does not change either ([guide/f0_model.en.md](guide/f0_model.en.md)). It is the recommended choice for newly trained models.
 
 ## The three F0 layers (baseline + plain + vibrato) and v/uv
 
@@ -102,7 +104,7 @@ pip install -e .[tuner]
 python vibrato_separation_tuner/app.py   # -> http://127.0.0.1:8017
 ```
 
-It decomposes phrases through the exact functions the training dataloader uses and shows per-phrase cards (F0 + plain overlay, vibrato, the gain curve, excluded regions and the filter response). Every parameter is explained in its UI tooltip, and [guide/tuner.en.md](guide/tuner.en.md) walks through both tabs. Once you like a setting, copy it into the `decomp:` section of `configs/ja_example.yaml` (per-database overrides go into the recipe's `decomp:`). The shards store only raw data, so **no re-preprocessing is needed**. For a non-Japanese dataset, change `lang:` in the recipe and in the training config (e.g. `lang: en` -> `dict/en.yaml`). To swap only the phoneme table or the nucleus set, use `--phonemes` / `--nucleus` of `train` / `duration_model.build_profile`.
+It decomposes phrases through the exact functions the training dataloader uses and shows per-phrase cards (F0 + plain overlay, vibrato, the gain curve, excluded regions and the filter response). Every parameter is explained in its UI tooltip, and [guide/tuner.en.md](guide/tuner.en.md) walks through both tabs. Once you like a setting, copy it into the `decomp:` section of `configs/ja_example.yaml` (per-database overrides go into the recipe's `decomp:`). The shards store only raw data, so **no re-preprocessing is needed**. For a non-Japanese dataset, change `lang:` in the recipe and in the training config (e.g. `lang: en_full` -> `dict/en_full.yaml`; the bundled languages and example configs are listed in [Languages other than Japanese](#languages-other-than-japanese)). To swap only the phoneme table or the nucleus set, use `--phonemes` / `--nucleus` of `train` / `duration_model.build_profile`.
 
 ### 2. Train
 
@@ -139,9 +141,11 @@ Scores are JSON. Nucleus phonemes require `midi` (fractional is fine); values on
 
 ```
 dict/           ja.yaml (language pack: nucleus set, silence map, score literals) + ja.phonemes (shared with LeapSinger)
-                + ja.mora (lyric→phoneme). Another language = add <lang>.yaml
+                + ja.mora (lyric→phoneme); the ko, zh_acv, zh_opencpop and en_full packs and the G2P dictionaries
+                (en_cmudict.txt, zh_pinyin.json). Another language = add <lang>.yaml
 configs/        ja_example.yaml (the config the bundled weights were trained with; every parameter
-                annotated) + recipes/<db>.yaml (one per database) + recipes/example_filled{,_en}.yaml
+                annotated) + examples for other languages (ko_coda, zh_acv, zh_opencpop, en_aidol, en_aidol_notes)
+                + recipes/<db>.yaml (one per database) + recipes/example_filled{,_en}.yaml
 preprocess/     wav+lab → shard.npz (entry: run.py; never reads a score)
 prettypitch/    pitch.py (representative values) baseline.py decomp.py correction.py losses.py models/
 dataset.py      shard → teacher signals (values / baseline / decomposition derived here every time)
@@ -149,6 +153,7 @@ train.py        training (diffusion + multi-scale GAN, auto-resume, TensorBoard)
 infer.py        JSON score → F0
 duration_model/ consonant-duration model + phoneme sets (phoneset.py) + floor profiles
 svs/            score → singing. score_io (UST/MusicXML) / duration_postprocess / render / plot
+                + g2p_ko.py, g2p_zh.py, g2p_en.py (lyric→phoneme)
 notebooks/      01 singing demo · 02 design notes · 03 how to drive the F0 model
 guide/          the reference documents (README.en.md is the index): pipeline, F0 model,
                 representative pitch, vibrato split, pitch correction, durations + fig/
@@ -160,6 +165,8 @@ checkpoints/    bundled weights (f0_3singer.pt, cons_dur_3singer.pt, nhv_v3_2_1.
 tools/          download_leapsinger.py (fetch the acoustic model) plot_decomp.py (visual QA of
                 preprocessing/decomposition) slim_ckpt.py (shrink a ckpt for distribution)
                 render_demos.py + make_demo_audio.py + make_demo_figures.py (rebuild docs/)
+                build_zh_pinyin.py, build_en_cmudict.py (rebuild the G2P dictionaries)
+                hold_labels/ (hold labels with GAME, for training the note encoder)
 export/         f0.py (ONNX export of the F0 model, DDPM and reflow alike, with a memory benchmark) cons_dur.py (consonant-duration model)
 ```
 
@@ -196,12 +203,34 @@ The notebooks walk through each stage:
 - `notebooks/02_design_notes.ipynb` — what each correction does and **why** (for people modifying it)
 - `notebooks/03_f0_control.ipynb` — expression vs vibrato as independent knobs, intensity that changes over the course of a phrase, and `style_mix` (it listens to the result, so like 01 it needs the LeapSinger acoustic model)
 
+## Languages other than Japanese
+
+The bundled weights cover the three Japanese singers only, but the following language packs and lyric-to-phoneme converters are included. With your own data, the F0 and consonant-duration models train exactly as for Japanese. Each phoneme table has the same contents as LeapSinger's table of the same name.
+
+| Language pack | Notation | Lyric → phoneme | Example config |
+|---|---|---|---|
+| `ja` | Japanese | mora table (`dict/ja.mora`) | `configs/ja_example.yaml` |
+| `ko` | Korean (Team CODA notation) | rule-based G2P (`svs/g2p_ko.py`: liaison, nasalization, tensification, ...) | `configs/ko_coda.yaml` |
+| `zh_acv` | Mandarin (ACV notation) | hanzi → pinyin (`dict/zh_pinyin.json`, phrase readings for polyphones) → rules (`svs/g2p_zh.py`) | `configs/zh_acv.yaml` |
+| `zh_opencpop` | Mandarin (Opencpop notation) | same | `configs/zh_opencpop.yaml` |
+| `en_full` | English | pronouncing dictionary (`dict/en_cmudict.txt`, CMUdict's first reading) | `configs/en_aidol.yaml`, `configs/en_aidol_notes.yaml` |
+
+Lyrics may also be written as phonemes (`[hh eh l ow]` in English, space-separated phonemes otherwise). Write English words missing from the dictionary as phonemes.
+
+**Hold and syllable marks**
+- "-", "ー" and notes without lyrics hold the previous note's vowel. In Korean, Mandarin and English the final consonant moves to the last held note ("밤" "-" → b a | a M).
+- Japanese, Mandarin and Korean put one syllable on each note, so "+" is a hold there too.
+- In English, a word of several syllables is written on one note and its syllables go, in order, to the following "+" notes (`again` `+` → ax | g eh n). `+~` and `+*` hold; `+3` starts at the word's third phoneme.
+- `lyric_style` decides `++` and what happens when a word has more syllables than notes: `sequential` (default) gives each + the next syllable and puts leftovers on the last note; `count` sings as many syllables as there are + signs and drops the rest.
+
+**Held notes and the F0 model**: an F0 model trained on labels written with a hold symbol (`ay -`; `hold_symbol` in the checkpoint) gets held vowels as that symbol from svs ("skies" "-" → s k ay | - z). Other models get the repeated vowel exactly as before. For acoustic models trained on labels that never split a vowel at a note change, `--merge_held_vowels` passes a held vowel as one phoneme.
+
 ## Notes
 
 - One frame = 256/44100 s (172.265625 fps) — the same grid as the LeapSinger acoustic model.
 - `data.min_sec: 1.7` is the minimum length the vibrato filter (filtfilt) needs, plus a safety margin (a 0.3 s FIR needs 0.93 s).
 - Old-generation checkpoints (hop 512, integer-MIDI input) cannot be resumed — the input representation changed.
-- **What "multilingual" actually means.** Everything that changes with the language lives in the language pack `dict/<lang>.yaml`: the phoneme inventory and id space (`<lang>.phonemes`; line order = id, id 0 is `pau`), the nucleus set (`nucleus:`), devoiced-vowel normalization (`vowel_normalize:`), silence symbols (`silence:` / `sil_map:`), score reading (`score:` — the UST encoding, rest/melisma lyric literals, the default melisma vowel) and the lyric→phoneme table (`.mora`). The *number* of consonants is not fixed, so a different inventory loads fine. `dict/en.yaml` is included, but the bundled weights cover the three Japanese singers only.
+- **What "multilingual" actually means.** Everything that changes with the language lives in the language pack `dict/<lang>.yaml`: the phoneme inventory and id space (`<lang>.phonemes`; line order = id, id 0 is `pau`), the nucleus set (`nucleus:`), devoiced-vowel normalization (`vowel_normalize:`), silence symbols (`silence:` / `sil_map:`), score reading (`score:` — the UST encoding, rest/melisma lyric literals, the default melisma vowel), the lyric→phoneme table (`.mora`) or the name of a rule-based G2P (`g2p:`), and whether phrase-final consonants are duration-model targets (`final_consonants:`). The hold symbol is not part of a pack; the recipe's `hold_symbol` and the training config's `model.hold_symbol` add it. The *number* of consonants is not fixed, so a different inventory loads fine. Korean, Mandarin and English packs are included, but the bundled weights cover the three Japanese singers only.
 
 ## Acknowledgments
 
@@ -217,6 +246,9 @@ Thanks to the datasets used to train this model, and to the related projects.
 - pitch-benchmark (Lars Nieradzik; the two files in `preprocess/algorithms/` come from it) — https://github.com/lars76/pitch-benchmark
 - RMVPE (the F0 model itself) — https://github.com/Dream-High/RMVPE
 - CREPE (`to_local_average_cents()`, reached via RMVPE) — https://github.com/marl/crepe
+- pypinyin (source data of the hanzi → pinyin table `dict/zh_pinyin.json` used by the Mandarin G2P) — https://github.com/mozillazg/python-pinyin
+- The CMU Pronouncing Dictionary (source data of the English dictionary `dict/en_cmudict.txt`) — https://github.com/cmusphinx/cmudict
+- GAME (openvpi; the note extraction model `tools/hold_labels/` uses to make hold labels; not bundled) — https://github.com/openvpi/GAME
 
 The distributed multi-speaker models display the credits above, following each database's terms. For Natsume Yuuri, we display **database production: アマノケイ / voice provider: 霧野蒼太**, and the "Terms of use for Natsume Yuuri's output audio" is bundled next to the models in `checkpoints/` (`checkpoints/CREDITS.txt` and `checkpoints/夏目悠李_利用規約.txt`).
 

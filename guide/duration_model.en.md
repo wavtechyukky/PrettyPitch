@@ -58,6 +58,8 @@ These are the keys `encode()` actually reads.
 
 Every feature is embedded into the hidden dimension and added. They are not concatenated.
 
+**A consonant with no note after it** (a coda at the end of a phrase or before a rest) is left out of the training records by default and gets a flat `FALLBACK_CONS_DUR` (80 ms) at inference, because Japanese hardly has any. For languages where phrases normally end in a closed syllable, such as Korean, `final_consonants: true` in the language pack records and predicts it as the previous note's coda (pitch = the previous note's representative value, `pitch_diff` 0, `next_note_dur` 0 = no note after it). Among the bundled packs, `ko`, `zh_acv` and `en_full` set it.
+
 ### Output
 
 The model regresses `log(length + 0.001)`. Inference computes `exp(output) - 0.001` and clamps it to a lower bound of 0.005 seconds.
@@ -337,7 +339,7 @@ If the time we want to place it at goes negative, for example at the start of a 
 | `dataset.py` | Sends the values it needs from the npz that the F0 model preprocess produced |
 | `train.py` | Training script |
 | `profile.py` / `build_profile.py` | Definition and generation of the floor profile |
-| `phoneset.py` | Loads the language pack (phoneme table, nucleus phonemes) |
+| `phoneset.py` | Loads the language pack (phoneme table, nucleus phonemes, `g2p`, `final_consonants`); appends the hold symbol (`hold`) to the phoneme table and the nucleus set |
 | `svs/cons_dur.py` | Connects the model to the post-processing |
 | `svs/duration_postprocess.py` | The post-processing itself |
 | `svs/score_io.py` | Score (UST / MusicXML) to Phrase |

@@ -17,10 +17,12 @@
 この置き換えで、次のことが成り立ちます。
 
 - **楽譜との照合作業がなくなる。** 前処理は lab と wav をそのまま使うだけ。
-- **多言語対応がしやすい。** 言語は `dict/<lang>.yaml`（言語パック）1 つが定義し、学習 config の `lang:` と前処理レシピの `lang:` で指定します。SVS レンダリング（`svs/`）はさらに歌詞→音素の `dict/<lang>.mora` が要ります（`--mora_table`）。完全に言語非依存ではない点は「[注意](#注意)」を参照。
+- **多言語対応がしやすい。** 言語は `dict/<lang>.yaml`（言語パック）1 つが定義し、学習 config の `lang:` と前処理レシピの `lang:` で指定します。SVS レンダリング（`svs/`）はさらに歌詞→音素の変換が要ります（日本語は `dict/ja.mora`、韓国語・中国語・英語は同梱の G2P。「[日本語以外の言語](#日本語以外の言語)」）。完全に言語非依存ではない点は「[注意](#注意)」を参照。
 - **音程の良くない歌唱データでも学習できる。** 教師は「実際に歌われたピッチ」との残差なので、楽譜からズレた歌い方でも学習は壊れない。生成時はユーザーが指定した音高どおりに歌う。
 
 モデル本体は 3ch の生成モデルです。DiffWave 型 DDPM（既定 10 step・x0 直接予測）と rectified flow（1 step）を config の `model.arch` で選べます。plain（抑揚）・vibrato（ビブラート）・v/uv の 3 チャンネルを生成し、`F0 = 2^(baseline + plain + vibrato)` で復元します（次節）。話者は低次元バンク（spk_dim=32）、スタイル（例: リツ 無印/normal/soft）は埋め込みの加算で切り替えます。
+
+入力の読み方は、音素ごとに読む形（既定・配布ウェイト）のほかに、音素の列と音符の列の 2 本で読む**音符エンコーダ**（`model.encoder: notes`）を選べます。音符をまたぐ母音を伸ばしの記号で書いたラベル（`ay -`。GAME を使って [tools/hold_labels/](tools/hold_labels/README.md) で作れます）で学習すると、「wan〜」と「wan an」を区別できます。入出力は同じなので、ONNX の形も変わりません（[guide/f0_model.md](guide/f0_model.md)）。新しく学習するモデルにはこちらを勧めます。
 
 ## F0 の 3 層構成（baseline + plain + vibrato）と v/uv
 
@@ -109,7 +111,7 @@ python vibrato_separation_tuner/app.py   # → http://127.0.0.1:8017
 
 学習と同一の関数で計算した結果をフレーズ毎のカードで表示します。タブが 2 つあり、左がビブラート分離（F0+plain 重ね・vibrato・ゲインカーブ・除外領域・フィルタ特性図）、右が核音素ごとの代表値（代表値の横線・平均律からのずれ・どのフレームが値を決めたかの重み）です。良い設定が見つかったら `configs/ja_example.yaml` の `decomp:` に転記してください（DB 別の上書きはレシピの `decomp:`）。npz は生データのみなので**前処理の再実行は不要**です。
 
-使い方の詳細は [guide/tuner.md](guide/tuner.md) にあります。日本語以外のデータセットでは、レシピと学習 config の `lang:` を変えてください（例 `lang: en` → `dict/en.yaml`）。音素表や核音素だけを差し替えたいときは、`train` / `duration_model.build_profile` の `--phonemes` / `--nucleus` を使います。
+使い方の詳細は [guide/tuner.md](guide/tuner.md) にあります。日本語以外のデータセットでは、レシピと学習 config の `lang:` を変えてください（例 `lang: en_full` → `dict/en_full.yaml`。同梱の言語と設定の例は「[日本語以外の言語](#日本語以外の言語)」）。音素表や核音素だけを差し替えたいときは、`train` / `duration_model.build_profile` の `--phonemes` / `--nucleus` を使います。
 
 ### 2. 学習
 
@@ -146,8 +148,10 @@ python -m infer --ckpt checkpoints/f0_3singer.pt \
 
 ```
 dict/           ja.yaml（言語パック：核音素・無音写像・楽譜記号） + ja.phonemes（音素・LeapSinger と共通）
-                + ja.mora（歌詞→音素）。他言語は <lang>.yaml を足すだけ
+                + ja.mora（歌詞→音素）。ko・zh_acv・zh_opencpop・en_full のパックと、G2P の辞書
+                （en_cmudict.txt・zh_pinyin.json）。他言語は <lang>.yaml を足すだけ
 configs/        ja_example.yaml（配布ウェイトを学習した設定・全パラメータ注釈つき）
+                + 他言語の例（ko_coda・zh_acv・zh_opencpop・en_aidol・en_aidol_notes）
                 + recipes/<db>.yaml（DB ごと） + recipes/example_filled{,_en}.yaml（書き方の例）
 preprocess/     wav+lab → shard.npz（run.py が入口。楽譜は一切読まない）
 prettypitch/    pitch.py（代表値） baseline.py decomp.py correction.py losses.py models/
@@ -156,6 +160,7 @@ train.py        学習（拡散 + MultiScale GAN・自動再開・TensorBoard）
 infer.py        JSON譜面 → F0
 duration_model/ 子音長モデル + 音素集合（phoneset.py）・floor プロファイル
 svs/            楽譜→歌声の統合。score_io（UST/MusicXML）/ duration_postprocess / render / plot
+                + g2p_ko.py・g2p_zh.py・g2p_en.py（歌詞→音素）
 notebooks/      01 歌唱デモ・02 設計意図・03 F0 の使い方
 guide/          資料一式（README.md が目次）。全体構成・F0 モデル・代表値・ビブラート分離・
                 ピッチ補正・持続長モデル・チューナー + fig/（図）
@@ -168,6 +173,8 @@ checkpoints/    同梱ウェイト（f0_3singer.pt・cons_dur_3singer.pt・nhv_v
 tools/          download_leapsinger.py（音響モデルの取得） plot_decomp.py（前処理/分解の目視QA）
                 slim_ckpt.py（配布用に ckpt を縮める） render_demos.py + make_demo_audio.py +
                 make_demo_figures.py（docs/ のデモページを作り直す）
+                build_zh_pinyin.py・build_en_cmudict.py（G2P の辞書を作り直す）
+                hold_labels/（GAME で伸ばしのラベルを作る。音符エンコーダの学習用）
 export/         f0.py（F0 モデルの ONNX export。DDPM / reflow 共通・メモリ計測つき） cons_dur.py（子音長モデル）
 ```
 
@@ -204,12 +211,34 @@ python -m svs.render examples/kirakiraboshi.ust -o out/kirakiraboshi.wav --spk_i
 - `notebooks/02_design_notes.ipynb` — 各段の補正の中身と**なぜ**そうしているか（改造する人向け）
 - `notebooks/03_f0_control.ipynb` — 抑揚とビブラートの独立制御、フレーズの中で時間変化する強度、`style_mix`（音声で確かめるセルがあるので、01 と同じく LeapSinger の音響ウェイトが要ります）
 
+## 日本語以外の言語
+
+配布ウェイトは日本語 3 話者だけですが、次の言語パックと歌詞→音素の変換を同梱しています。データを用意すれば、日本語と同じ手順で F0 モデルと子音長モデルを学習できます。音素表は LeapSinger の同名の表と同じ中身です。
+
+| 言語パック | 表記 | 歌詞 → 音素 | 設定の例 |
+|---|---|---|---|
+| `ja` | 日本語 | モーラ表（`dict/ja.mora`） | `configs/ja_example.yaml` |
+| `ko` | 韓国語（Team CODA の表記） | 規則の G2P（`svs/g2p_ko.py`。連音・鼻音化・濃音化など） | `configs/ko_coda.yaml` |
+| `zh_acv` | 中国語（ACV の表記） | 漢字 → 拼音（`dict/zh_pinyin.json`、熟語で多音字を読み分ける）→ 規則（`svs/g2p_zh.py`） | `configs/zh_acv.yaml` |
+| `zh_opencpop` | 中国語（Opencpop の表記） | 同上 | `configs/zh_opencpop.yaml` |
+| `en_full` | 英語 | 発音辞書（`dict/en_cmudict.txt`、CMUdict の最初の読み） | `configs/en_aidol.yaml`・`configs/en_aidol_notes.yaml` |
+
+歌詞には音素をそのまま書くこともできます（英語は `[hh eh l ow]`、ほかは空白で区切った音素）。辞書に無い英単語は、音素で書いてください。
+
+**伸ばしと音節の記号**
+- 「-」「ー」と歌詞の無い音符は、前の音符の母音を伸ばします。韓国語・中国語・英語では、終声は伸ばしの最後の音符へ移ります（「밤」「-」→ b a | a M）。
+- 日中韓は 1 音符に 1 音節なので、「+」も伸ばしと同じです。
+- 英語では、複数の音節の単語を 1 つの音符に書き、続く「+」の音符へ音節を前から配ります（`again` `+` → ax | g eh n）。`+~`・`+*` は伸ばし、`+3` は単語の 3 番目の音素から始めます。
+- `++` と、音符より音節が多いときの扱いは `lyric_style` で選べます。`sequential`（既定）は + ごとに次の 1 音節で、余った音節は最後の音符にまとめます。`count` は + の数だけ音節を歌い、余った音節は歌いません。
+
+**伸ばしの音符と F0 モデル**: 伸ばしの記号で書いたラベル（`ay -`）で学習した F0 モデル（ckpt の `hold_symbol`）には、svs は伸ばしの母音を記号で渡します（「skies」「-」→ s k ay | - z）。それ以外のモデルには、今までどおり同じ母音を繰り返して渡します。母音を音符ごとに分けないラベルで学習した音響モデルには、`--merge_held_vowels` で伸ばしの母音を 1 つにまとめて渡せます。
+
 ## 注意
 
 - 1 フレーム = 256/44100 秒（172.265625 fps）。LeapSinger の音響モデルと同じ格子です。
 - `data.min_sec: 1.7` はビブラート分離フィルタ（filtfilt）が要る最小長に安全側の余裕を足した値です（0.3 s の FIR なら下限は 0.93 秒）。
 - 旧世代（hop512・整数 MIDI 入力）のチェックポイントからの再開はできません（入力表現が別物）。
-- **多言語対応の実態**: 言語ごとに差し替えるものは `dict/<lang>.yaml`（言語パック）に集めてあります。音素インベントリ/ID 空間（`<lang>.phonemes`・行順が ID・id 0 は `pau`）、核音素（`nucleus:`）、無声化母音の正規化（`vowel_normalize:`）、無音記号（`silence:` / `sil_map:`）、楽譜の読み取り（`score:` — UST の文字コード、休符/メリスマ記号、メリスマの既定母音）、歌詞→音素（`.mora`）です。子音の**個数**は固定していないので別インベントリでも動きます。`dict/en.yaml` も同梱していますが、配布ウェイトは日本語 3 話者のみです。
+- **多言語対応の実態**: 言語ごとに差し替えるものは `dict/<lang>.yaml`（言語パック）に集めてあります。音素インベントリ/ID 空間（`<lang>.phonemes`・行順が ID・id 0 は `pau`）、核音素（`nucleus:`）、無声化母音の正規化（`vowel_normalize:`）、無音記号（`silence:` / `sil_map:`）、楽譜の読み取り（`score:` — UST の文字コード、休符/メリスマ記号、メリスマの既定母音）、歌詞→音素（`.mora`、または規則の G2P の名前 `g2p:`）、句末の終声を子音長モデルの対象にするか（`final_consonants:`）です。伸ばしの記号はパックに書かず、レシピの `hold_symbol` と学習 config の `model.hold_symbol` で足します。子音の**個数**は固定していないので別インベントリでも動きます。韓国語・中国語・英語のパックも同梱していますが、配布ウェイトは日本語 3 話者のみです。
 
 ## 謝辞
 
@@ -225,6 +254,9 @@ python -m svs.render examples/kirakiraboshi.ust -o out/kirakiraboshi.wav --spk_i
 - pitch-benchmark（Lars Nieradzik。`preprocess/algorithms/` の 2 ファイルはここからの取り込みです） — https://github.com/lars76/pitch-benchmark
 - RMVPE（F0 抽出モデル本体） — https://github.com/Dream-High/RMVPE
 - CREPE（RMVPE 経由で `to_local_average_cents()` を利用） — https://github.com/marl/crepe
+- pypinyin（中国語の G2P の漢字 → 拼音の表 `dict/zh_pinyin.json` の元データ） — https://github.com/mozillazg/python-pinyin
+- The CMU Pronouncing Dictionary（英語の発音辞書 `dict/en_cmudict.txt` の元データ） — https://github.com/cmusphinx/cmudict
+- GAME（openvpi。`tools/hold_labels/` が伸ばしのラベルを作るのに使う音符抽出モデル。同梱していません） — https://github.com/openvpi/GAME
 
 配布する多話者モデルには、各データベースの規約に従って上記のクレジットを表示します。夏目悠李については **歌声 DB 制作: アマノケイ／音声提供者: 霧野蒼太** を表示し、「夏目悠李の出力音声に関する利用規約」をモデルと同じ `checkpoints/` に同梱しています（`checkpoints/CREDITS.txt` と `checkpoints/夏目悠李_利用規約.txt`）。
 

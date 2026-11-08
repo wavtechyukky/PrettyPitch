@@ -58,6 +58,8 @@ coda を足すと自分の母音が減ります。日本語の `cl`（促音）�
 
 すべて hidden 次元に埋め込んで加算します（concat ではありません）。
 
+**後ろにノートの無い子音（句末・休みの前の終声）**は、既定では学習の記録から外れ、推論では一律 `FALLBACK_CONS_DUR`（80 ms）になります。日本語にはほぼ無いためです。韓国語のように閉じた音節で句が終わるのが普通の言語では、言語パックに `final_consonants: true` を書くと、前のノートの終声として記録・予測します（音高は前のノートの代表値、`pitch_diff` は 0、`next_note_dur` は 0 = 後ろにノートが無い）。同梱のパックでは `ko`・`zh_acv`・`en_full` が true です。
+
 ### 出力
 
 `log(長さ + 0.001)` を回帰し、推論は `exp(出力) - 0.001`、下限 0.005 秒でクランプします。
@@ -337,7 +339,7 @@ duration:
 | `dataset.py` | F0 モデルの preprocess で生成した npz から必要な値を送る |
 | `train.py` | 学習スクリプト |
 | `profile.py` / `build_profile.py` | floor プロファイルの定義と生成 |
-| `phoneset.py` | 言語パック（音素表・核音素）の読み込み |
+| `phoneset.py` | 言語パック（音素表・核音素・`g2p`・`final_consonants`）の読み込み。伸ばしの記号（`hold`）を音素表と核の末尾に足す |
 | `svs/cons_dur.py` | モデルと後処理をつなぐ |
 | `svs/duration_postprocess.py` | 後処理本体 |
 | `svs/score_io.py` | 楽譜（UST / MusicXML）→ Phrase |

@@ -27,16 +27,21 @@ A lyric becomes phonemes through the mora table that `dict/<lang>.yaml` names un
 | `か` | `k a` (through the mora table) |
 | `ky o` | `ky o` (taken directly) |
 
-English needs this. `mora` is `null` in `dict/en.yaml`, because English spelling cannot be mapped to phonemes by longest match (`shh` splits into `sh` + `h`). Write ARPAbet instead.
+### Korean, Mandarin and English lyrics (G2P)
 
-| Lyric field | Phonemes |
-|---|---|
-| `k l ow s` | `k l ow s` |
-| `close` | Not read. It is not in the phoneme inventory, so the mora table is consulted and fails |
+When the language pack has `g2p:`, a rule-based G2P turns lyrics into phonemes instead of the mora table. It runs over each run of notes not broken by a rest, so readings that depend on the neighbouring syllables come out right.
 
-To write words instead, build a table limited to your vocabulary and pass it with `--mora_table` (one word per line, `close<TAB>k l ow s`). General English needs a G2P.
+| Language pack | G2P | Example |
+|---|---|---|
+| `ko` | `svs/g2p_ko.py` (Hangul → Team CODA phonemes: liaison, nasalization, tensification, aspiration, liquidization, ...) | `사랑` → `s a r a NG` |
+| `zh_acv` / `zh_opencpop` | `svs/g2p_zh.py` (hanzi → pinyin, with phrase readings for polyphones → phonemes; lower-case pinyin can be written directly) | `看` → `k a N` (ACV), `k an` (Opencpop) |
+| `en_full` | `svs/g2p_en.py` (CMUdict pronouncing dictionary; unstressed AH0 is `ax`) | `hello` → `hh ax l ow` |
 
-**The bundled weights cannot sing English, though.** The score is read, but the F0 model, the consonant-length model and the acoustic model were all trained on three Japanese singers, and English phonemes are not in their vocabulary (it stops with `phonemes not in the model vocab`). Singing English means training on English data — `configs/recipes/example_filled_en.yaml` is the place to start.
+In English, phonemes in square brackets (`[hh eh l ow]`, `word[...]`) are read as phonemes. Write words missing from the dictionary that way.
+
+**Hold and syllable marks**: "-", "ー" and notes without lyrics hold the previous note's vowel, and the final consonant moves to the last held note ("밤" "-" → `b a | a M`). In English, a word of several syllables is written on one note and its syllables go to the following "+" notes (`again` `+` → `ax | g eh n`). `+~` and `+*` hold; `+3` starts at the word's third phoneme. `lyric_style` of `score_to_phrases` (`sequential` or `count`) decides `++` and leftover syllables. Japanese, Mandarin and Korean put one syllable on each note, so "+" is a hold there.
+
+**The bundled weights cannot sing languages other than Japanese, though.** The score is read, but the F0 model, the consonant-length model and the acoustic model were all trained on three Japanese singers, and other languages' phonemes are not in their vocabulary (it stops with `phonemes not in the model vocab`). Singing another language means training on that language's data (example configs: `configs/ko_coda.yaml`, `configs/zh_acv.yaml`, `configs/zh_opencpop.yaml`, `configs/en_aidol.yaml`).
 
 For reference, the 56 MusicXML files bundled with the Oniku Kurumi singing database — all written by MuseScore 3.4.2 — are read without a single warning. 348 of their 6931 notes carry a tie.
 
