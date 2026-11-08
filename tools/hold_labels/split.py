@@ -13,7 +13,7 @@
 run の入力は、元のラベルで前処理したシャード（句の音素・長さ・F0）と、レシピの wav・lab。句が曲のどこかは、
 pau 以外の音素の並びが lab と一致する所で決める（合わない句は飛ばして数を出す）。
 3 の代わりに、write が書いたレシピ（<out>/recipe.yaml）で前処理をやり直してもよい（RMVPE を回し直す）。
-どちらの場合も、学習の設定に model.hold_symbol: "-" を書く（guide/f0_model.md「音符エンコーダ」）。
+どちらの場合も、学習の設定に model.hold_symbol: "-" を書く（guide/f0_model.md「ノートエンコーダ」）。
 """
 from __future__ import annotations
 

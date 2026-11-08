@@ -5,7 +5,7 @@
 #   python -m duration_model.train --lang en_full --config configs/en_aidol.yaml --data_dirs data/aidol \
 #       --run_name cons_dur_aidol
 #   python -m train --config configs/en_aidol.yaml --data_dirs data/aidol --run_name pp_aidol --device cuda
-# 伸ばしの音符を区別して学習するなら configs/en_aidol_notes.yaml（音符エンコーダ。こちらを勧める）。
+# 伸ばしの音符を区別して学習するなら configs/en_aidol_notes.yaml（ノートエンコーダ。こちらを勧める）。
 # 話者の番号は LeapSinger の configs/en_aidol.yaml と同じ 0。評価の 2 曲も同じ決め方（種 42）で、同じ曲になる。
 
 lang: en_full

@@ -8,6 +8,18 @@ An F0 (pitch curve) model for singing voice synthesis that needs no musical scor
 
 ![PrettyPitch overview](guide/fig/prettypitch_overview.svg)
 
+## Updates
+
+**2026-11-08**
+
+- **Languages other than Japanese:** language packs and lyric-to-phoneme conversion (G2P) for Korean (Team CODA notation), Chinese (ACV / Opencpop notation) and English. In English lyrics, a word's syllables can be spread over the following `+` notes. → [Languages other than Japanese](#languages-other-than-japanese)
+- **Note encoder (`model.encoder: notes`):** a new way to read the input, as two streams, one of phonemes and one of notes. Trained on labels that write a held vowel with a hold symbol (`ay -`), it tells "wan~" from "wan an". Recommended for newly trained models. → [guide/f0_model.en.md](guide/f0_model.en.md)
+- **Hold-label tool:** uses GAME to split vowels held over several notes into labels like `ay -`. → [tools/hold_labels/](tools/hold_labels/README.en.md)
+- **SVS rendering (`svs/`):** F0 models trained with a hold symbol now receive held vowels as that symbol. Other models get the same input as before.
+- **Other:** phrase-final consonants can now be covered by the consonant-duration model (`final_consonants` in the language pack). F0 models with only one or two speakers can now be exported to ONNX.
+
+The bundled weights and the ONNX inputs and outputs are unchanged, so existing models keep working as they are.
+
 ## What is new
 
 Training uses no score (ust / MusicXML). **A wav and a phoneme label (.lab) are enough.**

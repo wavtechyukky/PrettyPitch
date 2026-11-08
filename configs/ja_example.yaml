@@ -29,7 +29,7 @@ model:
   conditioner: convnext        # 非ゲート ConvNeXt-1D conditioner（現状これだけ）
   convnext_dilations: [1, 5, 12, 24]   # convnext block dilations; len = block count,
                                # RF ≈ 1 + 6·Σd（この 4 ブロックで ≈253 フレーム）
-  # encoder: notes             # 入力を音素の列と音符の列の 2 本で読む（guide/f0_model.md「音符エンコーダ」）。
+  # encoder: notes             # 入力を音素の列と音符の列の 2 本で読む（guide/f0_model.md「ノートエンコーダ」）。
                                # 新しく学習するモデルにはこちらを勧める。省略 = phonemes（配布ウェイトはこちら）。
                                # 入出力は同じなので、ONNX の形も変わらない
   # hold_symbol: "-"           # 伸ばしの記号。音符をまたぐ母音を「ay -」のように分けたラベルで学習するとき、

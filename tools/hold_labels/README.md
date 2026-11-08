@@ -2,7 +2,7 @@
 
 **English**: [README.en.md](README.en.md)
 
-音符エンコーダ（`model.encoder: notes`、[guide/f0_model.md](../../guide/f0_model.md)）は、音符をまたぐ母音を音符ごとに分け、2 つ目からを伸ばしの記号で書いたラベル（`ay -`）で学習すると、「wan〜」（an が 2 つの音符にまたがる）と「wan an」（言い直し）を区別できます。このツールは、そのラベルを [GAME](https://github.com/openvpi/GAME)（openvpi の音符抽出モデル）で作ります。
+ノートエンコーダ（`model.encoder: notes`、[guide/f0_model.md](../../guide/f0_model.md)）は、音符をまたぐ母音を音符ごとに分け、2 つ目からを伸ばしの記号で書いたラベル（`ay -`）で学習すると、「wan〜」（an が 2 つの音符にまたがる）と「wan an」（言い直し）を区別できます。このツールは、そのラベルを [GAME](https://github.com/openvpi/GAME)（openvpi の音符抽出モデル）で作ります。
 
 **要らない場合**: 同梱の日本語のデータのように、音高が変わる所で母音を必ず分けてある（`a a`）ラベルには不要です。AIdol のように、音符をまたいでも母音を 1 行で書いてあるラベルで使います。
 
@@ -32,7 +32,7 @@ python -m tools.hold_labels.split write --recipe configs/recipes/aidol.yaml --sh
 python -m tools.hold_labels.split shard --shard data/aidol --splits work/aidol_hold/splits.json --out data/aidol_hold
 ```
 
-学習の設定には `model.hold_symbol: "-"` を書き（音素表の末尾に「-」が足されます）、音符エンコーダなら `model.encoder: notes` も書きます。例は [configs/en_aidol_notes.yaml](../../configs/en_aidol_notes.yaml) です。3 の代わりに、2 が書いた `work/<db>_hold/recipe.yaml` で前処理をやり直すこともできます（RMVPE を回し直します）。音素と F0 は同じになりますが、lab の時刻から長さを計算し直すときの丸めで、境界がまれに 1 フレームずれます（AIdol の 2 曲で試したところ、55 句のうち 3 句・4 か所。差し込んだ「-」の所ではない）。元のシャードとそろえたいときは 3 を使ってください。
+学習の設定には `model.hold_symbol: "-"` を書き（音素表の末尾に「-」が足されます）、ノートエンコーダなら `model.encoder: notes` も書きます。例は [configs/en_aidol_notes.yaml](../../configs/en_aidol_notes.yaml) です。3 の代わりに、2 が書いた `work/<db>_hold/recipe.yaml` で前処理をやり直すこともできます（RMVPE を回し直します）。音素と F0 は同じになりますが、lab の時刻から長さを計算し直すときの丸めで、境界がまれに 1 フレームずれます（AIdol の 2 曲で試したところ、55 句のうち 3 句・4 か所。差し込んだ「-」の所ではない）。元のシャードとそろえたいときは 3 を使ってください。
 
 `--lang` は GAME の言語（`en`・`ja`・`yue`・`zh`、`none` で指定しない）です。
 

@@ -8,6 +8,18 @@
 
 ![PrettyPitch の概要](guide/fig/prettypitch_overview.svg)
 
+## 更新情報
+
+**2026/11/8**
+
+- **日本語以外の言語:** 韓国語（Team CODA の表記）・中国語（ACV / Opencpop の表記）・英語の言語パックと、歌詞を音素に直す変換（G2P）を同梱しました。英語では、単語の音節を続く「+」の音符へ配れます。→「[日本語以外の言語](#日本語以外の言語)」
+- **ノートエンコーダ（`model.encoder: notes`）:** 入力を音素の列と音符の列の 2 本で読む、新しい読み方です。伸ばしの記号で書いたラベル（`ay -`）で学習すると、「wan〜」と「wan an」を区別できます。新しく学習するモデルにはこちらを勧めます。→ [guide/f0_model.md](guide/f0_model.md)
+- **伸ばしのラベルを作るツール:** GAME を使って、音符をまたぐ母音を「ay -」のように分けたラベルを作ります。→ [tools/hold_labels/](tools/hold_labels/README.md)
+- **歌声合成（`svs/`）:** 伸ばしの記号で学習した F0 モデルには、伸ばしの母音を記号で渡します。ほかのモデルには今までどおりです。
+- **その他:** 句末の終声も子音長モデルの対象にできるようにしました（言語パックの `final_consonants`）。話者が 1〜2 人のモデルでも、F0 モデルを ONNX に書き出せるようにしました。
+
+配布ウェイトと ONNX の入出力は変わらないので、今までのモデルはそのまま使えます。
+
 ## 何が新しいか
 
 学習データに楽譜（ust / MusicXML）を使いません。**wav と音素ラベル（.lab）だけ**で学習できます。
@@ -22,7 +34,7 @@
 
 モデル本体は 3ch の生成モデルです。DiffWave 型 DDPM（既定 10 step・x0 直接予測）と rectified flow（1 step）を config の `model.arch` で選べます。plain（抑揚）・vibrato（ビブラート）・v/uv の 3 チャンネルを生成し、`F0 = 2^(baseline + plain + vibrato)` で復元します（次節）。話者は低次元バンク（spk_dim=32）、スタイル（例: リツ 無印/normal/soft）は埋め込みの加算で切り替えます。
 
-入力の読み方は、音素ごとに読む形（既定・配布ウェイト）のほかに、音素の列と音符の列の 2 本で読む**音符エンコーダ**（`model.encoder: notes`）を選べます。音符をまたぐ母音を伸ばしの記号で書いたラベル（`ay -`。GAME を使って [tools/hold_labels/](tools/hold_labels/README.md) で作れます）で学習すると、「wan〜」と「wan an」を区別できます。入出力は同じなので、ONNX の形も変わりません（[guide/f0_model.md](guide/f0_model.md)）。新しく学習するモデルにはこちらを勧めます。
+入力の読み方は、音素ごとに読む形（既定・配布ウェイト）のほかに、音素の列と音符の列の 2 本で読む**ノートエンコーダ**（`model.encoder: notes`）を選べます。音符をまたぐ母音を伸ばしの記号で書いたラベル（`ay -`。GAME を使って [tools/hold_labels/](tools/hold_labels/README.md) で作れます）で学習すると、「wan〜」と「wan an」を区別できます。入出力は同じなので、ONNX の形も変わりません（[guide/f0_model.md](guide/f0_model.md)）。新しく学習するモデルにはこちらを勧めます。
 
 ## F0 の 3 層構成（baseline + plain + vibrato）と v/uv
 
@@ -174,7 +186,7 @@ tools/          download_leapsinger.py（音響モデルの取得） plot_decomp
                 slim_ckpt.py（配布用に ckpt を縮める） render_demos.py + make_demo_audio.py +
                 make_demo_figures.py（docs/ のデモページを作り直す）
                 build_zh_pinyin.py・build_en_cmudict.py（G2P の辞書を作り直す）
-                hold_labels/（GAME で伸ばしのラベルを作る。音符エンコーダの学習用）
+                hold_labels/（GAME で伸ばしのラベルを作る。ノートエンコーダの学習用）
 export/         f0.py（F0 モデルの ONNX export。DDPM / reflow 共通・メモリ計測つき） cons_dur.py（子音長モデル）
 ```
 
