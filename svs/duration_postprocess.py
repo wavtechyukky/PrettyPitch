@@ -87,6 +87,9 @@ class Note:
     pitch_midi: int
     dur_sec: float
     gap_after_sec: float = 0.0
+    # 楽譜で伸ばし・音節の続きの記号（歌詞なし・-・ー・+ で始まる歌詞）だった音符。
+    # 前の音符の母音をそのまま続けるかどうか（PhonemeSequence.held）を決めるのに使う
+    melisma: bool = False
 
 
 @dataclass
@@ -107,6 +110,9 @@ class PhonemeSequence:
     is_vowel: np.ndarray             # 母音（＝ピッチを担う）か [L] bool
     note_event_starts: np.ndarray    # ノートイベント先頭スロットで True [L] bool
     leading_pau_sec: float           # 先頭交渉後の leading pau [s]
+    # 伸ばしの音符で、前の音符の母音がそのまま続くスロットで True [L] bool（「skies」「-」の 2 つ目の ay）。
+    # 伸ばしの記号で学習した F0 モデルにはここを記号で渡し、--merge_held_vowels では音響モデルへ前の母音とまとめて渡す
+    held: Optional[np.ndarray] = None
 
 
 # ── 内部作業構造（グループ分解＋自然長／確定長）───────────────────────────────
@@ -125,6 +131,7 @@ class _Syl:
     core_nat: List[float] = field(default_factory=list)
     onset_dur: List[float] = field(default_factory=list)   # 圧縮・floor 後の確定長
     coda_dur: List[float] = field(default_factory=list)
+    melisma: bool = False                                  # Note.melisma（ノートの最初のグループだけ）
 
 
 # ── グループ分解（核を最大 1 つ持つ単位へ）─────────────────────────────────────
@@ -190,7 +197,8 @@ def split_phrase_syllables(phrase: Phrase, phoneset=None) -> Phrase:
         for gi, g in enumerate(groups):
             notes.append(Note(phonemes=list(g), pitch_midi=note.pitch_midi,
                               dur_sec=note.dur_sec / m,
-                              gap_after_sec=note.gap_after_sec if gi == m - 1 else 0.0))
+                              gap_after_sec=note.gap_after_sec if gi == m - 1 else 0.0,
+                              melisma=note.melisma and gi == 0))
     return Phrase(notes=notes, leading_pau_sec=phrase.leading_pau_sec,
                   trailing_pau_sec=phrase.trailing_pau_sec, start_sec=phrase.start_sec)
 
@@ -436,7 +444,8 @@ def _to_syls(phrase: Phrase, ps,
                 pitch_midi=note.pitch_midi,
                 dur_sec=note.dur_sec / m,                       # ノートをグループ数で等分
                 gap_after_sec=note.gap_after_sec if gi == m - 1 else 0.0,
-                onset_nat=list(on_nat), coda_nat=list(cd_nat), core_nat=list(co_nat)))
+                onset_nat=list(on_nat), coda_nat=list(cd_nat), core_nat=list(co_nat),
+                melisma=bool(getattr(note, 'melisma', False)) and gi == 0))
     return syls
 
 
@@ -533,13 +542,15 @@ def _build_sequence(syls: List[_Syl], leading_pau: float,
     midis: List[int] = []
     vowels: List[bool] = []
     starts: List[bool] = []
+    helds: List[bool] = []
 
-    def append(ph: str, dur: float, midi: int, vow: bool, start: bool) -> None:
+    def append(ph: str, dur: float, midi: int, vow: bool, start: bool, held: bool = False) -> None:
         phonemes.append(ph)
         durs.append(dur)
         midis.append(midi)
         vowels.append(vow)
         starts.append(start)
+        helds.append(held)
 
     append(PAU, leading_pau, 0, False, False)
 
@@ -579,8 +590,11 @@ def _build_sequence(syls: List[_Syl], leading_pau: float,
                     append(PAU, d_v, 0, False, False)
                 else:
                     is_start = first and not s.onset      # onset 無しなら最初の母音が先頭
+                    # 伸ばしの音符の最初の核が、すぐ前の音素と同じ母音なら「前の母音の続き」
+                    held = (is_start and s.melisma and ps.is_nucleus(v)
+                            and bool(phonemes) and phonemes[-1] == v)
                     # 核でない音素（cl・子音のみのノート）に母音フラグを立てない
-                    append(v, d_v, s.pitch_midi, ps.is_nucleus(v), is_start)
+                    append(v, d_v, s.pitch_midi, ps.is_nucleus(v), is_start, held)
                 first = False
         else:
             # 母音無し（子音のみのノート）— 尺を確保して pau で埋める（退化ケース）
@@ -602,7 +616,8 @@ def _build_sequence(syls: List[_Syl], leading_pau: float,
         note_midi=np.asarray(midis, dtype=np.int32),
         is_vowel=np.asarray(vowels, dtype=bool),
         note_event_starts=np.asarray(starts, dtype=bool),
-        leading_pau_sec=leading_pau)
+        leading_pau_sec=leading_pau,
+        held=np.asarray(helds, dtype=bool))
 
 
 def to_frames(dur_sec: np.ndarray, frame_rate: float) -> Tuple[np.ndarray, int]:

@@ -146,16 +146,36 @@ def _load_infer_module(name: str, root: Path):
     return mod
 
 
-def _f0_score_from_seq(seq, spk_id: int = 0, style_id: int = 0) -> dict:
+def _f0_score_from_seq(seq, spk_id: int = 0, style_id: int = 0, hold_symbol: Optional[str] = None) -> dict:
     """PhonemeSequence → synthesize_f0 用スコア。note_midi>0 の音素に midi を付す
-    （核音素は必須・子音は baseline 整形。pau は midi なし）。"""
+    （核音素は必須・子音は baseline 整形。pau は midi なし）。
+    hold_symbol を渡すと、伸ばしの音符で前の母音が続くスロット（seq.held）をその記号にする
+    （伸ばしの記号で書いたラベルで学習した F0 モデル用。midi はその音符の音高のまま）。"""
+    held = getattr(seq, 'held', None)
     phonemes = []
-    for ph, dur, midi in zip(seq.phonemes, seq.dur_sec, seq.note_midi):
+    for i, (ph, dur, midi) in enumerate(zip(seq.phonemes, seq.dur_sec, seq.note_midi)):
+        if hold_symbol is not None and held is not None and held[i]:
+            ph = hold_symbol
         slot = {'ph': ph, 'dur': float(dur)}
         if int(midi) > 0:
             slot['midi'] = int(midi)
         phonemes.append(slot)
     return {'spk_id': int(spk_id), 'style_id': int(style_id), 'phonemes': phonemes}
+
+
+def merge_held_vowels(ph_ids: np.ndarray, ph_durs: np.ndarray, held) -> tuple:
+    """伸ばしの母音（held のスロット）を前の音素に足し込んだ (ph_ids, ph_durs)。音響モデル用で、
+    合計フレーム数は変わらない。held が None か全部 False なら、そのまま返す。"""
+    if held is None or not np.any(held):
+        return ph_ids, ph_durs
+    ids, durs = [], []
+    for i, (p, d) in enumerate(zip(ph_ids, ph_durs)):
+        if held[i] and ids:
+            durs[-1] += int(d)
+        else:
+            ids.append(int(p))
+            durs.append(int(d))
+    return np.asarray(ids, np.int64), np.asarray(durs, np.asarray(ph_durs).dtype)
 
 
 _MEL_FRAME_CLIP_THR = 0.23   # 1 フレームの mean exp(ln-mel) の上限
@@ -338,10 +358,22 @@ class SvsContext:
     cons_dur_profile: Any = None        # floor プロファイル
     speaker_names: dict = field(default_factory=dict)   # id -> 名前（ckpt 由来・表示用）
     phoneset: Any = None                # 音素表。既定 = 子音長 ckpt が記録したもの
+    # 伸ばしの音符で続く母音を、音響モデルへ前の母音とまとめて 1 つで渡す（--merge_held_vowels）。
+    # 母音を音符ごとに分けないラベルで学習した音響モデル用。同梱の日本語モデルは分けたラベルなので off
+    merge_held_vowels: bool = False
 
     @property
     def use_uv(self) -> bool:
         return bool(self.ac_cfg.get('use_uv', True))
+
+    @property
+    def f0_hold_symbol(self) -> Optional[str]:
+        """F0 モデルが伸ばしの記号で書いたラベルで学習していれば、その記号。ckpt の hold_symbol を見て、
+        無ければ音素表に '-' があるとき '-'。None なら伸ばしの母音は今までどおり同じ母音を繰り返して渡す。"""
+        hold = self.f0_cfg.get('hold_symbol')
+        if hold is None and '-' in (self.f0_cfg.get('phonemes') or []):
+            hold = '-'
+        return hold
 
 
 def load_models(
@@ -354,10 +386,12 @@ def load_models(
     cons_dur_ckpt=DEFAULT_CONS_DUR_CKPT,
     lang: Optional[str] = None,
     verbose: bool = True,
+    merge_held_vowels: bool = False,
 ) -> SvsContext:
     """F0・音響・ボコーダ・子音長モデルをまとめてロードして SvsContext を返す。
 
     cons_dur_ckpt=None、または見つからない場合は子音長を固定値にフォールバックする。
+    merge_held_vowels: 伸ばしの母音を音響モデルへ前の母音とまとめて渡す（SvsContext.merge_held_vowels）。
     """
     pp_root = str(_PRETTYPITCH_ROOT)
     ls_root = str(Path(leapsinger_root).resolve())
@@ -412,12 +446,17 @@ def load_models(
         cons_dur_profile=cons_prof,
         speaker_names=speaker_names(cons_model),
         phoneset=_resolve_phoneset(lang, cons_model, ac_cfg, verbose),
+        merge_held_vowels=bool(merge_held_vowels),
     )
     if verbose:
         _nm = ctx.speaker_names.get(int(spk_id))
         print(f'  acoustic: use_uv={ctx.use_uv} n_speakers={ac_cfg.get("n_speakers")} '
               f'n_styles={ac_cfg.get("n_styles")}  | spk_id={spk_id}'
               + (f' ({_nm})' if _nm else ''), flush=True)
+        if ctx.f0_hold_symbol is not None:
+            print(f'  F0: 伸ばしの音符で続く母音を {ctx.f0_hold_symbol!r} で渡す', flush=True)
+        if ctx.merge_held_vowels:
+            print('  acoustic: 伸ばしの母音を前の母音とまとめて渡す', flush=True)
     return ctx
 
 
@@ -480,10 +519,12 @@ def phrase_f0(ctx: SvsContext, seq, *, style_id: int = 0, seed: int = 0,
     モデルが出したままの baseline + 抑揚 + ビブラート + v/uv。楽譜の音高へ寄せるのは
     次の `phrase_pitch_correction`。戻り値は f0_hz / uv / baseline_log2 / plain_delta /
     vib_delta などを持つ dict。
+    伸ばしの記号で学習した F0 モデル（ctx.f0_hold_symbol）には、伸ばしの音符で続く母音を記号で渡す。
+    そうでないモデルには、今までどおり同じ母音を繰り返して渡す。
     """
     return ctx.pp.generate_f0(
         ctx.f0_model, ctx.f0_cfg,
-        _f0_score_from_seq(seq, spk_id=ctx.spk_id, style_id=style_id),
+        _f0_score_from_seq(seq, spk_id=ctx.spk_id, style_id=style_id, hold_symbol=ctx.f0_hold_symbol),
         device=ctx.device, seed=seed,
         plain_scale=plain_scale, vib_scale=vib_scale, style_mix=style_mix)
 
@@ -610,7 +651,10 @@ def render_phrase(ctx: SvsContext, phrase, *, num_steps: Optional[int] = None, s
                 'start_sec': None, 'onset0_sec': None}
 
     # ── ⑤ 音響 mel ──────────────────────────────────────────────────────────
-    mel = phrase_mel(ctx, ph_ids, ph_durs, f0_hz, logf0, uv,
+    # --merge_held_vowels: 伸ばしの母音を前の母音とまとめて 1 つで渡す（合計フレーム数は同じ）
+    ac_ids, ac_durs = ((merge_held_vowels(ph_ids, ph_durs, seq.held)) if ctx.merge_held_vowels
+                       else (ph_ids, ph_durs))
+    mel = phrase_mel(ctx, ac_ids, ac_durs, f0_hz, logf0, uv,
                      style_id=style_id, num_steps=num_steps, seed=seed)
 
     # ── ⑥ mel 後処理 ────────────────────────────────────────────────────────
@@ -646,6 +690,7 @@ def render_score(
     transpose: int = 0,
     normalize: str = 'none',
     part=None,
+    merge_held_vowels: Optional[bool] = None,
 ):
     """Render a score file (.ust / .musicxml / .mxl) to audio.
 
@@ -673,6 +718,10 @@ def render_score(
             behaviour, which lets one loud sample decide the level of everything else.
         part: which MusicXML part to sing, by part id or part-name. The default picks the
             first part that has lyrics, so a score with an accompaniment works as it is.
+        merge_held_vowels: give the acoustic model a vowel held over several notes as one
+            phoneme (for acoustic models trained on labels that never split a vowel at a
+            note change). ``None`` keeps the context's setting (off by default). Held vowels
+            always reach an F0 model trained with a hold symbol as that symbol.
 
     Returns:
         ``(wav, sample_rate)`` — float32 mono audio with the phrases placed on the
@@ -683,6 +732,8 @@ def render_score(
                           vocoder_onnx=vocoder_onnx, leapsinger_root=leapsinger_root,
                           spk_id=spk_id, device=device, cons_dur_ckpt=cons_dur_ckpt,
                           lang=lang)
+    if merge_held_vowels is not None:
+        ctx.merge_held_vowels = bool(merge_held_vowels)
 
     from svs.score_io import load_score
     phrases = load_score(score_path, mora_table=mora_table, phoneset=ctx.phoneset,
@@ -770,6 +821,9 @@ def main():
                     help='音響モデルのサンプリング歩数。既定は ckpt の infer_steps（＝1）。'
                          '同梱モデルは 1 歩で出るよう学習した rectified flow なので、'
                          '増やしても良くなりません（遅くなり音も悪くなります）')
+    ap.add_argument('--merge_held_vowels', action='store_true',
+                    help='伸ばしの音符で続く母音を、音響モデルへ前の母音とまとめて 1 つで渡す。'
+                         '母音を音符ごとに分けないラベルで学習した音響モデル用（同梱の日本語モデルには使わない）')
     ap.add_argument('--device', default='cpu')
     ap.add_argument('--seed', type=int, default=0)
     a = ap.parse_args()
@@ -781,7 +835,8 @@ def main():
         mora_table=a.mora_table, style_id=a.style_id,
         plain_scale=a.plain_scale, vib_scale=a.vib_scale,
         cons_dur_ckpt=(None if str(a.cons_dur_ckpt).lower() == 'none' else a.cons_dur_ckpt),
-        lang=a.lang, transpose=a.transpose, normalize=a.normalize, part=a.part)
+        lang=a.lang, transpose=a.transpose, normalize=a.normalize, part=a.part,
+        merge_held_vowels=a.merge_held_vowels)
     _write_wav(a.out, wav, sr)
     print(f'wrote {a.out}  ({len(wav)/sr:.2f}s, {sr} Hz)')
 

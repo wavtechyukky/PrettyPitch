@@ -558,6 +558,16 @@ def _apply_g2p_en(score_notes: List[ScoreNote], ps, lyric_style: str = 'sequenti
     return [replace(sn, lyric=None) if m is not None and sn.phonemes is None else sn for sn, m in zip(out, marks)]
 
 
+def _is_melisma_note(sn: ScoreNote, ps) -> bool:
+    """楽譜で伸ばし・音節の続きの記号だった音符か（歌詞なし・空・言語パックの melisma_lyrics・-・ー・
+    + で始まる歌詞）。音素を G2P が決めた後でも歌詞は記号のまま残っている（英語で記号の音符が
+    音節を受け取らなかったときは歌詞なし）。前の母音がそのまま続くかは、長さを決めた後の音素列で見る。"""
+    lyr = sn.lyric
+    if lyr is None or lyr.strip() == '':
+        return True
+    return lyr in _melisma_lyrics(ps) or lyr in ('-', 'ー', 'ｰ') or lyr.startswith('+')
+
+
 def score_to_phrases(
     score_notes: List[ScoreNote],
     bpm: float,
@@ -608,7 +618,7 @@ def score_to_phrases(
             phrase_start = cursor
         phs = _resolve_phonemes(sn, mora_table, maxlen, prev_vowel, ps)
         cur.append(Note(phonemes=phs, pitch_midi=sn.midi,
-                        dur_sec=dur_s, gap_after_sec=0.0))
+                        dur_sec=dur_s, gap_after_sec=0.0, melisma=_is_melisma_note(sn, ps)))
         nuc = _last_nucleus(phs, ps)
         if nuc is not None:
             prev_vowel = nuc
