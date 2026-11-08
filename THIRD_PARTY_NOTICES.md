@@ -11,6 +11,7 @@ PrettyPitch is released under the MIT license (see [`LICENSE`](LICENSE)). A few 
 | Bundled neural vocoder | `checkpoints/nhv_v3_2_1.onnx` | non-commercial (its own training data) — see §5 |
 | Hanzi → pinyin table | `dict/zh_pinyin.json` | MIT (pypinyin) — see §7 |
 | English pronouncing dictionary | `dict/en_cmudict.txt` | BSD-style (CMUdict) — see §8 |
+| GAME note extraction (code and model) | used by `tools/hold_labels/`, **not** in this repo | code MIT, model CC BY-NC-SA 4.0 — see §9 |
 | Training data (singing databases) | **not** in this repo | each singing database's terms of use |
 
 Everything else in this repository is our own work and is MIT.
@@ -97,3 +98,11 @@ The pronouncing dictionary used by the English G2P (`svs/g2p_en.py`) is generate
 > Copyright (C) 1993-2015 Carnegie Mellon University. All rights reserved.
 
 We keep each word's first pronunciation, written in the `dict/en_full.phonemes` notation (lower case, stress digits dropped, unstressed AH0 as `ax`). The license text is in [`LICENSES/cmudict-BSD.txt`](LICENSES/cmudict-BSD.txt).
+
+## 9. GAME — used by `tools/hold_labels/` (not bundled)
+
+`tools/hold_labels/` (making hold labels for the note encoder) runs the note extraction model of
+
+> **GAME** — <https://github.com/openvpi/GAME> (openvpi)
+
+**Nothing of GAME is redistributed here.** The user clones GAME and downloads its pretrained model separately (instructions in `tools/hold_labels/README.md`); our code only imports it from that checkout at run time. GAME's code is MIT, and its pretrained models (`GAME-1.0-*`, release v1.0.0) are licensed CC BY-NC-SA 4.0 — follow those terms when you use them. The hold labels the tool writes are timestamps of note boundaries.

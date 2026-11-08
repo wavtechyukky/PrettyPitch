@@ -1,0 +1,107 @@
+# PrettyPitch の学習設定 — 英語、Project AI❤dol Public English Dataset、音符エンコーダ（model.encoder: notes）。
+# configs/en_aidol.yaml と同じ値で、違いは model.encoder・model.hold_symbol と、データ（伸ばしのラベル）だけ。
+# 音符をまたぐ母音を GAME の音符の境界で「ay -」に分けたラベルで学習し、「wan〜」と「wan an」を区別する
+# （guide/f0_model.md「音符エンコーダ」、tools/hold_labels/README.md）。
+# このデータで学習したモデルを公開するには、歌い手の事前の許可が要る（データセットの規約を参照）。
+#   python -m preprocess.run --recipe configs/recipes/aidol.yaml                       # -> data/aidol（元のラベル）
+#   python -m tools.hold_labels.split run   --recipe configs/recipes/aidol.yaml --shard data/aidol \
+#       --game_root ../GAME --lang en --out work/aidol_hold                            # GAME（CPU で 1 句 数秒）
+#   python -m tools.hold_labels.split write --recipe configs/recipes/aidol.yaml --shard data/aidol --out work/aidol_hold
+#   python -m tools.hold_labels.split shard --shard data/aidol --splits work/aidol_hold/splits.json \
+#       --out data/aidol_hold                                                          # 「-」を差し込んだシャード
+#   python -m train --config configs/en_aidol_notes.yaml --data_dirs data/aidol_hold --run_name pp_aidol_notes \
+#       --device cuda
+# 子音長モデルは元のラベル（data/aidol、configs/en_aidol.yaml）で学習したものを使う。
+
+lang: en_full
+
+audio:
+  sr: 44100
+  hop: 256
+
+model:
+  arch: diffusion
+  n_steps: 10
+  infer_steps: 1
+  conditioner: convnext
+  convnext_dilations: [1, 5, 12, 24]
+  spk_dim: 32
+  n_styles: 1
+  pitch_center: 60.0
+  pitch_scale: 12.0
+  encoder: notes               # 音素の列と音符の列の 2 本で読む
+  hold_symbol: "-"             # 伸ばしの記号（tools/hold_labels が書く記号。音素表と核の末尾に足される）
+
+pitch:
+  n_iter: 2
+  sigma_st: 1.0
+  sg_window_ms: 55.0
+  min_voiced: 3
+  devoiced_fill: interp
+  devib_representative: false
+  edge_window: asym
+  edge_lead_frac: 0.8
+  edge_trail_frac: 0.3
+  stability: slope
+  slope_k: 0.5
+  slope_cap: 15.0
+  crest_max_ms: 300
+  crest_depth_st: 1.0
+  crest_prom_st: 1.0
+  crest_sg_ms: 25.0
+  crest_band_st: 0.75
+  crest_offset_cent: 0.0
+
+decomp:
+  baseline_sigma_sec: 0.02
+  band: [4.5, 7.5]
+  fir_time_sec: 0.3
+  comp_method: tanh
+  comp_thresh_st: 2.0
+  comp_param: 0.5
+  gain_margin_sec: 0.05
+  cons_margin_pre_sec: 0.05
+  cons_margin_post_sec: 0.10
+  boundary_margin_pre_sec: 0.05
+  boundary_margin_post_sec: 0.10
+  boundary_mode: all
+  limit_margin_to_adjacent: true
+  min_open_sec: 0.10
+  gain_sigma_sec: 0.05
+  plain_std: 0.07
+  vib_std: 0.035
+  per_db: {}
+
+train:
+  lr: 2.0e-4
+  betas: [0.8, 0.99]
+  lr_step: 5000
+  lr_gamma: 0.5
+  grad_clip: 1.0
+  max_steps: 10000
+  max_batch_frames: 160000
+  max_batch_size: 32
+  num_workers: 4
+  w_delta: 10.0
+  w_delta_delta: 12.0
+  stft_loss_weight: 0.1
+  vib_l1_tail_sec: 0.2
+  balance_by: db
+  n_plot: 2
+  n_train_plot: 2
+  log_interval: 50
+  val_check_interval: 500
+  save_interval: 1000
+
+gan:
+  enabled: true
+  w_adv: 0.1
+  w_fm: 1.0
+  lr_d: 2.0e-4
+
+data:
+  eval_songs: 2
+  min_sec: 1.7
+  reject_f0_below: 100.0       # data/aidol_hold にはレシピが無いので、ここに書く（configs/recipes/aidol.yaml と同じ値）
+  spk_map:   {aidol_hold: 0}
+  style_map: {aidol_hold: 0}

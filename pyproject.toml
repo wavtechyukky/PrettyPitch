@@ -32,6 +32,7 @@ data = ["gdown"]                                     # preprocess/download_scrip
 tuner = ["fastapi", "uvicorn"]                       # vibrato_separation_tuner web app
 notebooks = ["jupyter", "ipykernel"]                 # notebooks/
 export = ["onnx", "onnxsim"]                         # export/（ONNX 書き出し）
+game = ["omegaconf", "pydantic>=2.11"]               # tools/hold_labels/（GAME で伸ばしのラベルを作る。GAME は別に取得）
 test = ["pytest"]                                    # tests/
 
 # Only the model package is installed; `preprocess/`, `export/`, `svs/`, `duration_model/`,
