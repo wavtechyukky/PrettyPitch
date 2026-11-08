@@ -2,7 +2,7 @@
 
 **English**: [README.en.md](README.en.md)
 
-ノートエンコーダ（`model.encoder: notes`、[guide/f0_model.md](../../guide/f0_model.md)）は、音符をまたぐ母音を音符ごとに分け、2 つ目からを伸ばしの記号で書いたラベル（`ay -`）で学習すると、「wan〜」（an が 2 つの音符にまたがる）と「wan an」（言い直し）を区別できます。このツールは、そのラベルを [GAME](https://github.com/openvpi/GAME)（openvpi の音符抽出モデル）で作ります。
+ノートエンコーダ（`model.encoder: notes`、[guide/f0_model.md](../../guide/f0_model.md)）は、音符をまたぐ母音を音符ごとに分け、2 つ目からを伸ばしの記号で書いたラベル（`an -`）で学習すると、「wan〜」（an が 2 つの音符にまたがる）と「wan an」（言い直し）を区別できます。このツールは、そのラベルを [GAME](https://github.com/openvpi/GAME)（openvpi の音符抽出モデル）で作ります。
 
 **要らない場合**: 同梱の日本語のデータのように、音高が変わる所で母音を必ず分けてある（`a a`）ラベルには不要です。AIdol のように、音符をまたいでも母音を 1 行で書いてあるラベルで使います。
 

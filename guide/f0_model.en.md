@@ -41,16 +41,18 @@ Two terms that are constant over time are added to this. One is the speaker bank
 
 ### Note encoder (`model.encoder: notes`)
 
-This encoder replaces steps 1–3 above and reads the input as two streams, one of phonemes and one of notes. Its inputs (phoneme ids, pitch, durations) and outputs are the same, so the ONNX inputs and outputs do not change either. It is the recommended choice for newly trained models.
+This encoder replaces steps 1–3 above and reads the input as two streams, one of phonemes and one of notes. Its inputs (phoneme ids, pitch, durations) and outputs are the same, so the shape of the ONNX inputs and outputs does not change either (what the host needs is under "Compatibility" at the end of this section). It is the recommended choice for newly trained models.
 
 1. The hold symbol (`model.hold_symbol`, e.g. `-`) is folded into the preceding vowel before any embedding. The network never learns the symbol itself.
 2. Phoneme stream: `[phoneme embedding | log1p duration | position in the phoneme]`, stretched by the merged durations.
 3. Note stream: a note starts at every nucleus, every hold symbol and the first pau of a run. `[pitch projection × (1 − rest) | rest flag | log1p note length | position in the note]`, stretched by the note lengths. Pau runs, and onset consonants after a rest, become rest notes.
 4. The two streams are concatenated and a 1×1 conv takes them to 128 dimensions. Everything after that (ConvNeXt, denoiser) is the same as above.
 
-The hold symbol is for labels in which a vowel sung over several notes is split per note, with every part after the first written as the symbol (`ay -`). "wan~" (an held over two notes) and "wan an" (an sung again) have the same note stream and differ only in the phoneme stream, so the model can learn them apart. Writing the same `hold_symbol` in the recipe and the training config appends the symbol to the end of the phoneme table (existing ids do not change). [tools/hold_labels/README.md](../tools/hold_labels/README.md) explains how to make such labels.
+The hold symbol is for labels in which a vowel sung over several notes is split per note, with every part after the first written as the symbol (`an -`). "wan~" (an held over two notes) and "wan an" (an sung again) have the same note stream and differ only in the phoneme stream, so the model can learn them apart. Writing the same `hold_symbol` in the recipe and the training config appends the symbol to the end of the phoneme table (existing ids do not change). [tools/hold_labels/README.en.md](../tools/hold_labels/README.en.md) explains how to make such labels.
 
 Labels that write a held vowel as a repeat (`a a`) work too. The bundled Japanese data is written that way and always splits the vowel where the pitch changes, so it needs no hold symbol; a note then starts at every nucleus. The default is `phonemes` (the steps above), which the bundled weights use.
+
+**Compatibility**: existing models (such as the bundled weights) keep working with the new code as they are (it is backward compatible). Models trained with a hold symbol have the same ONNX input and output shapes, but to use them as intended, the host has to pass held vowels as that symbol (`hold_symbol` in the ONNX metadata; see [export/README.md](../export/README.md), in Japanese). Older hosts that do not know the symbol still run them, but held notes are then treated as re-sung ("wan an").
 
 ## Denoiser
 

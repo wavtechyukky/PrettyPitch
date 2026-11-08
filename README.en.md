@@ -13,12 +13,12 @@ An F0 (pitch curve) model for singing voice synthesis that needs no musical scor
 **2026-11-08**
 
 - **Languages other than Japanese:** language packs and lyric-to-phoneme conversion (G2P) for Korean (Team CODA notation), Chinese (ACV / Opencpop notation) and English. In English lyrics, a word's syllables can be spread over the following `+` notes. → [Languages other than Japanese](#languages-other-than-japanese)
-- **Note encoder (`model.encoder: notes`):** a new way to read the input, as two streams, one of phonemes and one of notes. Trained on labels that write a held vowel with a hold symbol (`ay -`), it tells "wan~" from "wan an". Recommended for newly trained models. → [guide/f0_model.en.md](guide/f0_model.en.md)
+- **Note encoder (`model.encoder: notes`):** the input is split into two streams, one of phonemes and one of notes (older models take the phoneme stream only). Labels that write a held vowel with a hold symbol (e.g. `an -`) let it tell "w an~" from "w an an". (With older models, both can only be entered as "w an an", so they cannot be learned properly.) Recommended for newly trained models. → [guide/f0_model.en.md](guide/f0_model.en.md)
 - **Hold-label tool:** uses GAME to split vowels held over several notes into labels like `ay -`. → [tools/hold_labels/](tools/hold_labels/README.en.md)
 - **SVS rendering (`svs/`):** F0 models trained with a hold symbol now receive held vowels as that symbol. Other models get the same input as before.
 - **Other:** phrase-final consonants can now be covered by the consonant-duration model (`final_consonants` in the language pack). F0 models with only one or two speakers can now be exported to ONNX.
 
-The bundled weights and the ONNX inputs and outputs are unchanged, so existing models keep working as they are.
+Existing models (the bundled weights and their ONNX files) keep working with the new code as they are (it is backward compatible). New models trained with a hold symbol have the same ONNX input and output shapes, but to use them as intended you need a host that passes held vowels as that symbol (one that reads `hold_symbol` in the metadata). Older hosts still run them, but held notes are then treated as re-sung.
 
 ## What is new
 
@@ -34,7 +34,7 @@ This one substitution buys several things at once:
 
 The model itself is a 3-channel generative model. A DiffWave-style DDPM (default 10 steps, x0 direct prediction) and rectified flow (1 step) are both available through `model.arch` in the config. It generates plain (expression), vibrato and v/uv, reconstructed as `F0 = 2^(baseline + plain + vibrato)` (next section). Speakers use a low-dimensional bank (spk_dim=32); styles (e.g. Ritsu default / normal / soft) are additive embeddings.
 
-Besides reading the input per phoneme (the default, used by the bundled weights), the model can use a **note encoder** (`model.encoder: notes`) that reads it as two streams, one of phonemes and one of notes. Trained on labels that write a vowel held over several notes with a hold symbol (`ay -`; [tools/hold_labels/](tools/hold_labels/README.en.md) makes them with GAME), it tells "wan~" from "wan an". The inputs and outputs are the same, so the ONNX shape does not change either ([guide/f0_model.en.md](guide/f0_model.en.md)). It is the recommended choice for newly trained models.
+Besides reading the input per phoneme (the default, used by the bundled weights), the model can use a **note encoder** (`model.encoder: notes`) that reads it as two streams, one of phonemes and one of notes. Trained on labels that write a vowel held over several notes with a hold symbol (`an -`; [tools/hold_labels/](tools/hold_labels/README.en.md) makes them with GAME), it tells "wan~" from "wan an". The inputs and outputs are the same, so the ONNX shape does not change either; to use a model trained with a hold symbol as intended, though, the host has to pass held vowels as that symbol ([guide/f0_model.en.md](guide/f0_model.en.md)). It is the recommended choice for newly trained models.
 
 ## The three F0 layers (baseline + plain + vibrato) and v/uv
 

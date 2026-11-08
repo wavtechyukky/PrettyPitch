@@ -2,7 +2,7 @@
 
 **日本語**: [README.md](README.md)
 
-The note encoder (`model.encoder: notes`, [guide/f0_model.en.md](../../guide/f0_model.en.md)) can tell "wan~" (an held over two notes) from "wan an" (an sung again) when it is trained on labels that split a vowel sung over several notes per note, writing every part after the first as the hold symbol (`ay -`). This tool makes such labels with [GAME](https://github.com/openvpi/GAME), openvpi's note extraction model.
+The note encoder (`model.encoder: notes`, [guide/f0_model.en.md](../../guide/f0_model.en.md)) can tell "wan~" (an held over two notes) from "wan an" (an sung again) when it is trained on labels that split a vowel sung over several notes per note, writing every part after the first as the hold symbol (`an -`). This tool makes such labels with [GAME](https://github.com/openvpi/GAME), openvpi's note extraction model.
 
 **When you do not need it**: labels that always split the vowel where the pitch changes (`a a`), like the bundled Japanese data, need nothing. Use it for labels such as AIdol's, which write a vowel as one row even when it spans several notes.
 

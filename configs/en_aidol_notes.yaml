@@ -1,6 +1,6 @@
 # PrettyPitch の学習設定 — 英語、Project AI❤dol Public English Dataset、ノートエンコーダ（model.encoder: notes）。
 # configs/en_aidol.yaml と同じ値で、違いは model.encoder・model.hold_symbol と、データ（伸ばしのラベル）だけ。
-# 音符をまたぐ母音を GAME の音符の境界で「ay -」に分けたラベルで学習し、「wan〜」と「wan an」を区別する
+# 音符をまたぐ母音を GAME の音符の境界で「an -」に分けたラベルで学習し、「wan〜」と「wan an」を区別する
 # （guide/f0_model.md「ノートエンコーダ」、tools/hold_labels/README.md）。
 # このデータで学習したモデルを公開するには、歌い手の事前の許可が要る（データセットの規約を参照）。
 #   python -m preprocess.run --recipe configs/recipes/aidol.yaml                       # -> data/aidol（元のラベル）
