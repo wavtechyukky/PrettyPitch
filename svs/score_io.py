@@ -302,9 +302,9 @@ def parse_musicxml(path: Path, part: Optional[str] = None,
 
 # ── 音素解決・フレーズ分割 ──────────────────────────────────────────────────
 
-def _last_nucleus(phonemes: List[str]) -> Optional[str]:
+def _last_nucleus(phonemes: List[str], ps=None) -> Optional[str]:
     for p in reversed(phonemes):
-        if _is_nucleus_ph(p):
+        if _is_nucleus_ph(p, ps):
             return p
     return None
 
@@ -328,7 +328,7 @@ def _tokenize_lyric(lyric: str, mora_table: Dict[str, List[str]],
                 matched = (sub, L)
                 break
         if matched is None and lyric[i] in _melisma_lyrics(phoneset):
-            phs.append(_last_nucleus(phs) or prev_vowel)     # 伸ばし棒 = 直前の核を伸ばす
+            phs.append(_last_nucleus(phs, phoneset) or prev_vowel)   # 伸ばし棒 = 直前の核を伸ばす
             i += 1
             continue
         if matched is None:
@@ -372,8 +372,9 @@ def _resolve_phonemes(sn: ScoreNote, mora_table: Dict[str, List[str]],
     return _tokenize_lyric(lyr, mora_table, maxlen, prev_vowel, phoneset)
 
 
-def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
-    """言語パックが g2p: を持つ言語（韓国語・中国語・英語）で、歌詞の音素を先に決めておく。英語は _apply_g2p_en。
+def _apply_g2p(score_notes: List[ScoreNote], phoneset=None, lyric_style: str = 'sequential') -> List[ScoreNote]:
+    """言語パックが g2p: を持つ言語（韓国語・中国語・英語）で、歌詞の音素を先に決めておく。英語は _apply_g2p_en
+    （lyric_style はその伸ばし記号の読み方）。
 
     韓国語は前後の音節で発音が変わる（連音・鼻音化・濃音化など）、中国語は多音字の読みが熟語で決まるので、
     1 ノートずつは引けない。休符を挟まずに続くノートの並び（休符・音素を直接書いたノート・G2P で読めない歌詞で
@@ -383,7 +384,7 @@ def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
     """
     ps = phoneset or _ps_mod.active()
     if ps.g2p == 'en':
-        return _apply_g2p_en(score_notes, ps)
+        return _apply_g2p_en(score_notes, ps, lyric_style)
     if ps.g2p == 'ko':
         from .g2p_ko import lyric_syllables, syllables_to_phonemes
     elif ps.g2p == 'zh_acv':
@@ -454,53 +455,107 @@ def _apply_g2p(score_notes: List[ScoreNote], phoneset=None) -> List[ScoreNote]:
     return out
 
 
-def _apply_g2p_en(score_notes: List[ScoreNote], ps) -> List[ScoreNote]:
+# 英語の伸ばし記号の読み方（score_to_phrases の lyric_style）。違うのは ++ と、音符より多い音節の扱いだけ
+#   sequential: + ごとに次の 1 音節（++ も + と同じ）。余った音節は、音節を受け取った最後の音符にまとめて歌う
+#   count:      + の数だけ音節を歌う（++ で 2 音節）。単語の音符は、+ が続くときは最初の 1 音節だけ。余った音節は歌わない
+LYRIC_STYLES = ('sequential', 'count')
+_EN_HOLD = frozenset({'', '-', 'ー', 'ｰ'})          # 伸ばし: 前の母音を続ける（音節は進めない）
+
+
+def _en_mark(lyric: Optional[str]) -> Optional[Tuple[str, int]]:
+    """英語の歌詞が単語に続く記号なら (種類, 数)、記号でなければ None。種類は
+    'hold'（伸ばし: 歌詞なし・空・-・ー・+~・+*）、'next'（次の音節へ。数は + の数）、'at'（+3: 単語の 3 番目の音素から）。
+    + で始まるその他の歌詞は + と同じ（+ で始まる歌詞は、どれも前の単語の続きとして読む）。"""
+    if lyric is None or lyric in _EN_HOLD:
+        return ('hold', 0)
+    if not lyric.startswith('+'):
+        return None
+    body = lyric[1:]
+    if body[:1] in ('~', '*'):
+        return ('hold', 0)
+    if body.isdigit():
+        return ('at', int(body))
+    return ('next', len(lyric)) if body.strip('+') == '' else ('next', 1)
+
+
+def _distribute_word(phs: List[str], marks: List[Tuple[str, int]], ps, counted: bool) -> List[Optional[List[str]]]:
+    """単語の音素 phs を、単語の音符（0 番）と続く記号の音符（1 番〜、marks）に配る。音符ごとの音素（配らない音符は None）。
+
+    音節を受け取る音符は、前の音符の音節の次から始まる（+3 なら単語の 3 番目の音素から。前の音符より後ろのときだけ）。
+    受け取る音節が残っていない + は伸ばしになる。伸ばしの音符は直前の音節の母音を続け、その音節の終わりの子音は
+    伸ばしの最後の音符へ移す（「skies」「-」→ s k ay | ay z。韓国語・中国語の G2P と同じ）。"""
+    L = len(phs)
+    bounds, s = [], 0                            # 各音節の終わり（= 次の音節の頭。最後は L）
+    for syl in _syllabify(phs, ps):
+        s += len(syl)
+        bounds.append(s)
+
+    def end_of(head: int, k: int) -> int:        # head から k 音節ぶんの終わり（足りなければ単語の終わり）
+        later = [b for b in bounds if b > head]
+        return later[min(k, len(later)) - 1] if later else L
+
+    takes, heads = [0], [0]                      # 音節を受け取る音符の番号と、その頭の音素の番号
+    end = end_of(0, 1) if counted and any(m[0] != 'hold' for m in marks) else L
+    for n, (kind, k) in enumerate(marks, 1):
+        if kind == 'hold':
+            continue
+        if kind == 'at' and heads[-1] < k - 1 < L:
+            head, k = k - 1, 1
+        else:
+            head = end if counted else end_of(heads[-1], 1)
+            k = k if counted and kind == 'next' else 1
+        if head >= L:
+            continue                             # 受け取る音節が残っていない: 伸ばし
+        takes.append(n)
+        heads.append(head)
+        end = end_of(head, k)
+    per: List[Optional[List[str]]] = [None] * (len(marks) + 1)
+    for t, (n, head) in enumerate(zip(takes, heads)):
+        tail = heads[t + 1] if t + 1 < len(heads) else (end if counted else L)
+        chunk = phs[head:tail]
+        held = range(n + 1, takes[t + 1] if t + 1 < len(takes) else len(marks) + 1)
+        nuc = max((m for m, p in enumerate(chunk) if ps.is_nucleus(p)), default=None)
+        if held and nuc is not None:             # 核の無い音節を伸ばす音符は None のまま（直前の母音を伸ばす）
+            vowel, coda = chunk[nuc], chunk[nuc + 1:]
+            chunk = chunk[:nuc + 1]
+            for h in held:
+                per[h] = [vowel]
+            per[held[-1]] = [vowel] + coda
+        per[n] = chunk
+    return per
+
+
+def _apply_g2p_en(score_notes: List[ScoreNote], ps, lyric_style: str = 'sequential') -> List[ScoreNote]:
     """英語（言語パックの g2p: en）: 歌詞を音素にし（svs/g2p_en.py。単語は発音辞書、[hh eh l ow] などは音素のまま）、
-    続く伸ばし記号（+）の音符へ音節を前から順に配る。「again」「+」は ax | g eh n になる。音節は核ごとに切り、核の間の子音は後ろの音節の頭にする（_syllabify。子音長モデルの学習と同じ
-    切り方。頭の子音は音符の前へ出るので、鳴る時刻は前の音符の終わり）。
-    音節より音符が多ければ、最後の音節の母音を伸ばし、その終わりの子音は最後の音符へ移す（韓国語・中国語の G2P と同じ）。
-    音符より音節が多ければ、残りは最後の音符にまとめる（1 音符に複数の音節。長さは等分される）。
-    辞書にも無く音素でもない歌詞は KeyError。
+    休符を挟まずに続く記号の音符（_en_mark）へ音節を前から順に配る（_distribute_word）。「again」「+」は ax | g eh n、
+    「night」「+~」は n ay | ay t になる。lyric_style（LYRIC_STYLES）は ++ と余った音節の扱いを決める。音節は核ごとに
+    切り、核の間の子音は後ろの音節の頭にする（_syllabify。子音長モデルの学習と同じ切り方。頭の子音は音符の前へ出るので、
+    鳴る時刻は前の音符の終わり）。単語に続いていない記号の音符は、前の母音を伸ばす。辞書にも無く音素でもない歌詞は KeyError。
     """
     from .g2p_en import lyric_phonemes
-    mel = _melisma_lyrics(ps)
+    if lyric_style not in LYRIC_STYLES:
+        raise ValueError(f'lyric_style は {LYRIC_STYLES} のどれか（{lyric_style!r}）')
     out = list(score_notes)
-
-    def is_mel(sn: ScoreNote) -> bool:
-        return (not sn.is_rest and sn.phonemes is None
-                and (sn.lyric is None or sn.lyric == '' or sn.lyric in mel))
-
+    marks = [None if sn.is_rest or sn.phonemes is not None else _en_mark(sn.lyric) for sn in out]
     i = 0
     while i < len(out):
         sn = out[i]
-        if sn.is_rest or is_mel(sn):
+        if sn.is_rest or marks[i] is not None:
             i += 1
             continue
         phs = list(sn.phonemes) if sn.phonemes is not None else lyric_phonemes(sn.lyric, ps)
         if phs is None:
             raise KeyError(f'歌詞 {sn.lyric!r} は英語の発音辞書にありません'
                            f'（音素で書くときは [hh eh l ow] のように [ ] で囲んでください）')
-        j = i + 1                                # 続く伸ばし記号の音符 [i + 1, j)
-        while j < len(out) and is_mel(out[j]):
+        j = i + 1                                # 続く記号の音符 [i + 1, j)
+        while j < len(out) and marks[j] is not None:
             j += 1
-        n = j - i
-        syls = [list(s) for s in _syllabify(phs, ps)]
-        if len(syls) >= n:
-            per = syls[:n - 1] + [[p for s in syls[n - 1:] for p in s]]
-        else:
-            per = syls
-            last = per[-1]
-            nuc = max((m for m, p in enumerate(last) if ps.is_nucleus(p)), default=None)
-            if nuc is not None:
-                vowel, coda = last[nuc], last[nuc + 1:]
-                per[-1] = last[:nuc + 1]
-                rest = [[vowel] for _ in range(n - len(per))]
-                rest[-1] += coda
-                per += rest
-        for k, p in enumerate(per):              # 核の無い音節で配れなかった音符は、そのまま（直前の母音を伸ばす）
-            out[i + k] = replace(out[i + k], phonemes=p)
+        for k, p in enumerate(_distribute_word(phs, marks[i + 1:j], ps, lyric_style == 'count')):
+            if p is not None:
+                out[i + k] = replace(out[i + k], phonemes=p)
         i = j
-    return out
+    # 音素の決まらなかった記号の音符は、歌詞なし（score_to_phrases が前の母音を伸ばす）
+    return [replace(sn, lyric=None) if m is not None and sn.phonemes is None else sn for sn, m in zip(out, marks)]
 
 
 def score_to_phrases(
@@ -511,6 +566,7 @@ def score_to_phrases(
     pau_lead_sec: float = 0.25,
     pau_trail_sec: float = 0.25,
     phoneset=None,
+    lyric_style: str = 'sequential',       # 英語の伸ばし記号の読み方（LYRIC_STYLES）
 ) -> List[Phrase]:
     """ScoreNote 列 → Phrase 列。
 
@@ -520,7 +576,7 @@ def score_to_phrases(
     ps = phoneset or _ps_mod.active()
     mora_table = _as_mora_table(mora_table, ps)
     maxlen = max((len(k) for k in mora_table), default=1)
-    score_notes = _apply_g2p(score_notes, ps)     # 韓国語など、規則の G2P を持つ言語だけ
+    score_notes = _apply_g2p(score_notes, ps, lyric_style)   # 韓国語など、規則の G2P を持つ言語だけ
     b2s = 60.0 / bpm
 
     phrases: List[Phrase] = []
@@ -553,7 +609,7 @@ def score_to_phrases(
         phs = _resolve_phonemes(sn, mora_table, maxlen, prev_vowel, ps)
         cur.append(Note(phonemes=phs, pitch_midi=sn.midi,
                         dur_sec=dur_s, gap_after_sec=0.0))
-        nuc = _last_nucleus(phs)
+        nuc = _last_nucleus(phs, ps)
         if nuc is not None:
             prev_vowel = nuc
         cursor += dur_s
@@ -578,8 +634,11 @@ def load_score(path: Path, mora_table=None, phoneset=None, lang=None,
         part: which MusicXML part to sing, by part id or part-name. The default picks the
             first part that has lyrics, so a score with a piano accompaniment works.
         **kwargs: passed to ``score_to_phrases`` — ``split_silence_sec`` (a rest at least
-            this long starts a new phrase, default 0.5) and ``pau_lead_sec`` /
-            ``pau_trail_sec`` (silence added at both ends of a phrase, default 0.25).
+            this long starts a new phrase, default 0.5), ``pau_lead_sec`` /
+            ``pau_trail_sec`` (silence added at both ends of a phrase, default 0.25) and
+            ``lyric_style`` (how English ``+`` notes take syllables: ``'sequential'``, the
+            default, where each ``+`` takes the next one and leftovers go onto the last note,
+            or ``'count'``, where ``++`` takes two and leftovers are not sung).
 
     Returns:
         ``List[Phrase]`` — each with its notes (phonemes, pitch, length, gap) and the

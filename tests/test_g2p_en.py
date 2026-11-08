@@ -14,8 +14,9 @@ def _notes(*lyrics):
     return [ScoreNote(dur_beats=1.0, midi=60, lyric=lyr) for lyr in lyrics]
 
 
-def _per_note(*lyrics):
-    return [" ".join(n.phonemes) for n in score_to_phrases(_notes(*lyrics), bpm=120, phoneset=_en())[0].notes]
+def _per_note(*lyrics, style="sequential"):
+    phrases = score_to_phrases(_notes(*lyrics), bpm=120, phoneset=_en(), lyric_style=style)
+    return [" ".join(n.phonemes) for n in phrases[0].notes]
 
 
 def test_dictionary_uses_only_en_full_phonemes_and_writes_unstressed_ah_as_ax():
@@ -76,3 +77,42 @@ def test_consonant_only_note_and_unknown_word():
     assert _per_note("night", "s") == ["n ay t", "s"]
     with pytest.raises(KeyError):
         _per_note("zqxvwk")
+
+
+@pytest.mark.parametrize("style", ["sequential", "count"])
+def test_hold_marks_keep_the_vowel_without_taking_a_syllable(style):
+    for hold in ("-", "+~", "+*", "ー", None):
+        assert _per_note("night", hold, style=style) == ["n ay", "ay t"]
+    assert _per_note("wonderful", "+~", "+", "+", style=style) == ["w ah", "ah", "n d er", "f ax l"]
+    assert _per_note("again", "+", "-", style=style) == ["ax", "g eh", "eh n"]
+
+
+@pytest.mark.parametrize("style", ["sequential", "count"])
+def test_plus_number_starts_at_that_phoneme_of_the_word(style):
+    assert _per_note("wonderful", "+4", "+", style=style) == ["w ah n", "d er", "f ax l"]
+    assert _per_note("wonderful", "+3", "+", style=style) == ["w ah", "n d er", "f ax l"]
+    assert _per_note("wonderful", "+1", "+", style=style) == ["w ah", "n d er", "f ax l"]   # 前の音符より前は + と同じ
+
+
+def test_sequential_style_puts_leftover_syllables_on_the_last_note_and_reads_plus_plus_as_plus():
+    assert _per_note("accompany", "++", "+") == ["ax", "k ah", "m p ax n iy"]
+    assert _per_note("accompany", "+", "-") == ["ax", "k ah m p ax n iy", "iy"]
+
+
+def test_count_style_takes_as_many_syllables_as_pluses_and_drops_the_rest():
+    assert _per_note("accompany", "++", "+", style="count") == ["ax", "k ah m p ax", "n iy"]
+    assert _per_note("accompany", "++", style="count") == ["ax", "k ah m p ax"]
+    assert _per_note("accompany", "+", "-", style="count") == ["ax", "k ah", "ah"]
+    assert _per_note("accompany", "-", style="count") == ["ax k ah m p ax n iy", "iy"]   # + が無ければ単語を全部
+    assert _per_note("night", "+", "+", style="count") == ["n ay", "ay", "ay t"]
+
+
+def test_marks_after_a_rest_hold_the_previous_vowel():
+    notes = _notes("night", "+~")
+    notes.insert(1, ScoreNote(dur_beats=0.25, midi=0, lyric=None, is_rest=True))
+    assert [" ".join(n.phonemes) for n in score_to_phrases(notes, bpm=120, phoneset=_en())[0].notes] == ["n ay t", "ay"]
+
+
+def test_unknown_lyric_style_raises():
+    with pytest.raises(ValueError):
+        _per_note("night", style="other")
