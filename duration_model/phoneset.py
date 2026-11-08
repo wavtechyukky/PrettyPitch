@@ -55,6 +55,9 @@ class PhoneSet:
     sil_map: Mapping[str, str] = field(default_factory=dict)
     case_fold: Optional[str] = None            # None | 'lower' | 'upper'
     strip_stress_digits: bool = False
+    # 後ろに核の無い子音（句末・休みの前の終声）も子音長モデルの対象にするか。
+    # 終声で句が終わる言語（韓国語など）で true。duration_model/features.py を参照
+    final_consonants: bool = False
     score: Mapping = field(default_factory=dict)
     phonemes_path: Optional[Path] = None
     nucleus_path: Optional[Path] = None
@@ -123,6 +126,7 @@ class PhoneSet:
             'n_consonants': self.n_consonants,
             'case_fold': self.case_fold,
             'strip_stress_digits': self.strip_stress_digits,
+            'final_consonants': self.final_consonants,
         }
 
 
@@ -211,6 +215,7 @@ def load(lang: str = DEFAULT_LANG,
         sil_map=dict(pack.get('sil_map') or {}),
         case_fold=pack.get('case_fold') or None,
         strip_stress_digits=bool(pack.get('strip_stress_digits', False)),
+        final_consonants=bool(pack.get('final_consonants', False)),
         score=dict(pack.get('score') or {}),
         phonemes_path=ph_path,
         nucleus_path=nu_path,
